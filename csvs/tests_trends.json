@@ -1,0 +1,280 @@
+{
+  "Coagulation": {
+    "up": [
+      {
+        "is_sig": true,
+        "tests": [
+          "APTT_R",
+          "APTT_sec",
+          "FIBRINOGEN",
+          "PDW"
+        ]
+      },
+      {
+        "is_sig": false,
+        "tests": [
+          "MPV",
+          "PT_SEC",
+          "PT_INR",
+          "PLT"
+        ]
+      }
+    ],
+    "down": [
+      {
+        "is_sig": true,
+        "tests": []
+      },
+      {
+        "is_sig": false,
+        "tests": []
+      }
+    ]
+  },
+  "Endocrine": {
+    "up": [
+      {
+        "is_sig": true,
+        "tests": [
+          "T3_FREE"
+        ]
+      },
+      {
+        "is_sig": false,
+        "tests": [
+          "T4_FREE",
+          "TSH_THYROID_STIMULATING_HORMONE"
+        ]
+      }
+    ],
+    "down": [
+      {
+        "is_sig": true,
+        "tests": []
+      },
+      {
+        "is_sig": false,
+        "tests": []
+      }
+    ]
+  },
+  "Immune": {
+    "up": [
+      {
+        "is_sig": true,
+        "tests": [
+          "LYMP",
+          "PCT"
+        ]
+      },
+      {
+        "is_sig": false,
+        "tests": [
+          "LUCperc",
+          "LYMperc",
+          "NEUT",
+          "NEUTperc"
+        ]
+      }
+    ],
+    "down": [
+      {
+        "is_sig": true,
+        "tests": [
+          "EOS_perc",
+          "LUC",
+          "MONperc"
+        ]
+      },
+      {
+        "is_sig": false,
+        "tests": [
+          "BASO_perc",
+          "BASOPHILES_abs",
+          "EOS",
+          "MONO",
+          "WBC"
+        ]
+      }
+    ]
+  },
+  "Metabolism": {
+    "up": [
+      {
+        "is_sig": true,
+        "tests": [
+          "CHOLESTEROL",
+          "CHOLESTEROL_LDL",
+          "NON_HDL_CHOLESTEROL",
+          "TRIGLYCERIDES"
+        ]
+      },
+      {
+        "is_sig": false,
+        "tests": [
+          "AMYLASE_BLOOD",
+          "BMI",
+          "CHOLESTEROL_HDL"
+        ]
+      }
+    ],
+    "down": [
+      {
+        "is_sig": true,
+        "tests": [
+          "GLUCOSE_BLOOD",
+          "HEMOGLOBIN_A1C_CALCULATED"
+        ]
+      },
+      {
+        "is_sig": false,
+        "tests": []
+      }
+    ]
+  },
+  "Musculoskeletal": {
+    "up": [
+      {
+        "is_sig": true,
+        "tests": [
+          "LACTIC_DEHYDROGENASE_LDH__BLOOD"
+        ]
+      },
+      {
+        "is_sig": false,
+        "tests": [
+          "CALCIUM_BLOOD",
+          "PHOSPHATASE_ALKALINE",
+          "PHOSPHORUS_BLOOD"
+        ]
+      }
+    ],
+    "down": [
+      {
+        "is_sig": true,
+        "tests": []
+      },
+      {
+        "is_sig": false,
+        "tests": [
+          "CK_CREAT"
+        ]
+      }
+    ]
+  },
+  "Liver": {
+    "up": [
+      {
+        "is_sig": true,
+        "tests": [
+          "ALBUMIN",
+          "PROTEIN_TOTAL_BLOOD"
+        ]
+      },
+      {
+        "is_sig": false,
+        "tests": []
+      }
+    ],
+    "down": [
+      {
+        "is_sig": true,
+        "tests": [
+          "BILIRUBIN_INDIRECT",
+          "BILIRUBIN_TOTAL",
+          "GAMMA_GLUTAMYL_TRANSPEPTIDASE"
+        ]
+      },
+      {
+        "is_sig": false,
+        "tests": [
+          "ALT_Alanine_aminotransferase_GPT",
+          "AST_Aspartate_aminotransferase_GOT",
+          "BILIRUBIN_DIRECT",
+          "GLOBULIN"
+        ]
+      }
+    ]
+  },
+  "Renal": {
+    "up": [
+      {
+        "is_sig": true,
+        "tests": [
+          "SPECIFIC_GRAVITY"
+        ]
+      },
+      {
+        "is_sig": false,
+        "tests": [
+          "Cl",
+          "PH_u"
+        ]
+      }
+    ],
+    "down": [
+      {
+        "is_sig": true,
+        "tests": [
+          "BPd",
+          "BPs",
+          "CREATININE_BLOOD",
+          "K",
+          "MAGNESIUM_BLOOD",
+          "Na",
+          "PH_u",
+          "UREA_BLOOD",
+          "URIC_ACID_BLOOD"
+        ]
+      },
+      {
+        "is_sig": false,
+        "tests": []
+      }
+    ]
+  },
+  "RBCs": {
+    "up": [
+      {
+        "is_sig": true,
+        "tests": [
+          "MCH",
+          "MCV",
+          "RDW",
+          "RDW_SD"
+        ]
+      },
+      {
+        "is_sig": false,
+        "tests": [
+          "FOLIC_ACID",
+          "HYPO_perc",
+          "IRON",
+          "MACROperc",
+          "MICR_perc",
+          "RBC"
+        ]
+      }
+    ],
+    "down": [
+      {
+        "is_sig": true,
+        "tests": [
+          "FERRITIN",
+          "MCHC",
+          "TRANSFERRIN"
+        ]
+      },
+      {
+        "is_sig": false,
+        "tests": [
+          "HCT",
+          "HDW",
+          "HGB",
+          "HYPERperc",
+          "MICROperc_HYPOperc"
+        ]
+      }
+    ]
+  }
+}
