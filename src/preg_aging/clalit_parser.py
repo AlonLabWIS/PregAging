@@ -2,10 +2,10 @@ import re
 import os
 from typing import Union, Sequence, Hashable
 
-import numpy as np
 import pandas as pd
 
 from . import cached_reader
+# from .analyses import recalculate_mean_sd_lin_approx  # TODO: circular import with analyses.py
 
 _RANGE_RE = re.compile(r"\[(-?\d+),(-?\d+)[)\]]")
 
@@ -29,13 +29,13 @@ def translate_long_to_short_lab(long_names: Union[Hashable, Sequence[Hashable]])
     metadata = get_metadata()
     return metadata.loc[long_names, "Short name"]
 
-def translate_long_to_labnorm_name(short_names: Union[Hashable, Sequence[Hashable]]) -> pd.Series:
+def translate_long_to_labnorm_name(long_names: Union[Hashable, Sequence[Hashable]]) -> pd.Series:
     metadata = get_metadata()
-    return metadata.loc[short_names, "LabNorm name"]
+    return metadata.loc[long_names, "LabNorm name"]
 
-def translate_long_to_nice_name(short_names: Union[Hashable, Sequence[Hashable]]) -> pd.Series:
+def translate_long_to_nice_name(long_names: Union[Hashable, Sequence[Hashable]]) -> pd.Series:
     metadata = get_metadata()
-    return metadata.loc[short_names, "Nice name"]
+    return metadata.loc[long_names, "Nice name"]
 
 def group_tests(tests:list[str] = None):
     metadata = get_metadata()
@@ -95,48 +95,23 @@ def get_data_by_tests_and_field(tests: Sequence[str], field: str):
     return pd.concat(sers, axis=1)
 
 
-def recalculate_mean_sd_lin_approx(quantiles, values):
-    """
-    Piecewise linear approximation to mean and standard deviation.
-    :param quantiles: Length n >1
-    :param values: Same length as quantiles
-    :return:
-    """
-    # Find the left and right support for the CDF
-    left_extrapolation_x = (values[:, 0], values[:, 1])  # any point left of the min would do
-    left_extrapolation_y = (quantiles[0], quantiles[1])
-    right_extrapolation_x = (values[:, -2], values[:, -1])  # any point right of the max would do
-    right_extrapolation_y = (quantiles[-2], quantiles[-1])
-    left_support = _find_target_linear(*left_extrapolation_x, *left_extrapolation_y, target=0)
-    right_support = _find_target_linear(*right_extrapolation_x, *right_extrapolation_y, target=1)
-    segment_edges = np.hstack((left_support[:, np.newaxis], values, right_support[:, np.newaxis]))
-    right_edges = segment_edges[:, 1:]
-    left_edges = segment_edges[:, :-1]
-    slopes = _find_slopes_pieces(values, quantiles)
-    # Mean is definite integral of piecewise linear function, slopes*x
-    mean = ((right_edges ** 2 - left_edges ** 2) * slopes / 2).sum(axis=1)
-    # SD is sqrt of definite integral of piecewise quadratic function, slopes*x**2
-    sd = np.sqrt(((right_edges ** 3 - left_edges ** 3) * slopes / 3).sum(axis=1) - mean ** 2)
-    return mean, sd
-
-
-def recalculate_mean_sd_bad_tests(test_name, test_df: pd.DataFrame,
-                                  test_sem_thresholds={"BMI": 0.3, "CK_CREAT": 10,
-                                                       "LACTIC_DEHYDROGENASE_LDH__BLOOD": 4.5},
-                                  sd_column="val_sd", n_column="val_n", mean_column="val_mean"):
-    test_df = test_df.copy()
-    if test_name not in test_sem_thresholds:
-        return test_df
-    sem = test_df[sd_column] / test_df[n_column] ** 0.5
-    # TODO argument where sem is bad
-    bad_sem_indices = sem.index[sem > test_sem_thresholds[test_name]]
-    quantiles, columns = _get_quantiles_from_column_names(test_df.columns)
-    sorted_quantiles = np.argsort(quantiles)
-    columns = np.array(columns)[sorted_quantiles]
-    quantiles = np.array(quantiles)[sorted_quantiles]
-    mean, sd = recalculate_mean_sd_lin_approx(quantiles, test_df.loc[bad_sem_indices, columns].values)
-    test_df.loc[bad_sem_indices, [mean_column, sd_column]] = np.stack([mean, sd], axis=1)
-    return test_df
+# def recalculate_mean_sd_bad_tests(test_name, test_df: pd.DataFrame,
+#                                   test_sem_thresholds={"BMI": 0.3, "CK_CREAT": 10,
+#                                                        "LACTIC_DEHYDROGENASE_LDH__BLOOD": 4.5},
+#                                   sd_column="val_sd", n_column="val_n", mean_column="val_mean"):
+#     test_df = test_df.copy()
+#     if test_name not in test_sem_thresholds:
+#         return test_df
+#     sem = test_df[sd_column] / test_df[n_column] ** 0.5
+#     # TODO argument where sem is bad
+#     bad_sem_indices = sem.index[sem > test_sem_thresholds[test_name]]
+#     quantiles, columns = _get_quantiles_from_column_names(test_df.columns)
+#     sorted_quantiles = np.argsort(quantiles)
+#     columns = np.array(columns)[sorted_quantiles]
+#     quantiles = np.array(quantiles)[sorted_quantiles]
+#     mean, sd = recalculate_mean_sd_lin_approx(quantiles, test_df.loc[bad_sem_indices, columns].values)
+#     test_df.loc[bad_sem_indices, [mean_column, sd_column]] = np.stack([mean, sd], axis=1)
+#     return test_df
 
 def join_weekly_bins(test_name, num_bins_to_join=2):
     df = get_clalit_age_data(test_name)
@@ -144,18 +119,7 @@ def join_weekly_bins(test_name, num_bins_to_join=2):
         return df
 
 
-
-def _find_target_linear(x1, x2, y1, y2, target):
-    slope = (y2 - y1) / (x2 - x1)
-    return (target - y1) / slope + x1
-
-
-def _find_slopes_pieces(xs: np.ndarray, ys: np.ndarray):
-    slopes = (ys[1:] - ys[:-1]) / (xs[:, 1:] - xs[:, :-1])
-    return np.pad(slopes, ((0, 0),(1, 1)), mode="edge")
-
-
-def _get_quantiles_from_column_names(column_names):
+def get_quantiles_from_column_names(column_names):
     quantiles = []
     columns = []
     for column_name in column_names:

@@ -14,7 +14,7 @@ def cached_reader(csv_path: str, filter_query: str = None, **kwargs) -> pd.DataF
     else:
         return df
 
-@cache
+#@cache
 def get_tests(remove_urine = False, remove_percent=False, remove_pct=False, tests_json_path: str =_TESTS_TO_COMP_PATH) -> list[str]:
     with open(tests_json_path) as f:
         tsts = json.load(f)
@@ -23,5 +23,5 @@ def get_tests(remove_urine = False, remove_percent=False, remove_pct=False, test
     if remove_percent:
         tsts = list(filter(lambda x: "perc" not in x, tsts))
     if remove_pct:
-        tsts = list(filter(lambda x: x!="PCT", tsts))
+        tsts = list(filter(lambda x: x not in ["PCT"], tsts))
     return tsts
