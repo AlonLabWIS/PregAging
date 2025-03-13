@@ -15,8 +15,6 @@ from .analyses import find_pregnancy_amplitude, find_labnorm_amplitude, z_test_s
     calculate_model_weights_ci, predict_age_in_pregnancy
 from .clalit_parser import translate_long_to_short_lab, get_data_by_tests_and_field, get_condition_from_filename
 
-_COLORS = ["red", "blue", "green", "orange", "brown"]
-
 
 def remove_top_right_frame(axes: Iterable[Axes]):
     for ax in axes:
@@ -24,20 +22,89 @@ def remove_top_right_frame(axes: Iterable[Axes]):
         ax.spines['top'].set_visible(False)
 
 
-def remove_ax_labels_and_ticks(ax: Axes, remove_x: bool = False, remove_y: bool = False):
-    ax.set_title('')
-    if remove_x:
-        ax.set_xlabel('')
-        ax.set_xticks([])
-    if remove_y:
-        ax.set_yticks([])
-        ax.set_ylabel('')
+def grid_test_groups(test_groups_keys: Sequence[str], ncols: int) -> (plt.Figure, np.ndarray):
+    """
+    Create a grid of subplots with the test groups as the title of each subplot. If the number of keys is less than total number of subplots, the remaining subplots are not displayed.
+    :param test_groups_keys: The titles for each subplot
+    :param ncols: Number of columns in the grid
+    :return: A 2D numpy array with shape ((len(test_groups_keys) - 1) // ncols + 1, ncols)
+    """
+    nrows = (len(test_groups_keys) - 1) // ncols + 1
+    fig, axs = plt.subplots(nrows=nrows, ncols=ncols, figsize=(5 * ncols, 5 * nrows))
+    flattened_axs: Sequence[Axes] = axs.flatten()
+    # Remove axes for any unused subplots
+    for i in range(0, len(flattened_axs)):
+        if i < len(test_groups_keys):
+            flattened_axs[i].annotate(test_groups_keys[i], xy=(0.05, 1.05), xycoords='axes fraction', fontsize=16)
+        else:
+            flattened_axs[i].set_axis_off()
+    return fig, axs
+
+
+def style_quadrant_plots(ax: Axes, xlabel: str, ylabel: str = "Pregnancy max quantile difference",
+                         same_scale: bool = True):
+    """
+    Resize the plots and add a reddish tint on the 1st, 3rd quadrants and a greenish tint on the 2nd, 4th quadrants.
+    Add "aging" and "rejuvenation" annotations respectively and bold lines on x=0, y=0.
+    :param ax: The axes to plot on
+    :param xlabel: Label for the x-axis
+    :param ylabel: Label for the y-axis
+    :param same_scale: If true, Resize equally on the x,y axes. If false, resize the max value (in absolute term) on each individual axis symmetrically
+    :return:
+    """
+    if same_scale:
+        max_xy = np.abs(ax.get_xlim() + ax.get_ylim()).max()  # plus sign is concatenation
+        max_xy *= 1.05  # add margin
+        ax.set_xlim(-max_xy, max_xy)
+        ax.set_ylim(-max_xy, max_xy)
+        ax.plot([-max_xy, max_xy], [-max_xy, max_xy], '--', c="gainsboro", lw=0.5)
+        ax.plot([-max_xy, max_xy], [max_xy, -max_xy], '--', c="gainsboro", lw=0.5)
+        max_x = max_xy
+        max_y = max_xy
+    else:
+        max_x = np.abs(ax.get_xlim()).max() * 1.05
+        max_y = np.abs(ax.get_ylim()).max() * 1.05
+        ax.set_xlim(-max_x, max_x)
+        ax.set_ylim(-max_y, max_y)
+
+    # 1st
+    ax.fill_between([0, max_x], max_y, color='orangered', alpha=0.05)
+    # 2nd
+    ax.fill_between([-max_x, 0], max_y, color='lightgreen', alpha=0.05)
+    # 3rd
+    ax.fill_between([-max_x, 0], -max_y, color='orangered', alpha=0.05)
+    # 4th
+    ax.fill_between([0, max_x], -max_y, color='lightgreen', alpha=0.05)
+    ax.annotate("aging", xy=(max_x / 2, max_y / 2), fontsize=12, color='k',
+                ha='center')
+    ax.annotate("rejuvenation", xy=(-max_x / 2, max_y / 2), fontsize=12,
+                color='k', ha='center')
+    ax.axhline(y=0, color='k', lw=0.5)
+    ax.axvline(x=0, color='k', lw=0.5)
+    ax.set_xlabel(xlabel, fontsize=14)
+    ax.set_ylabel(ylabel, fontsize=14)
+
+
+def remove_grid_labels(axs: np.ndarray):
+    """
+    Remove all x-labels for every plot not in the bottom row and y-labels for every plot not in the rightmost column.
+    :param axs: A 2D array of Axes objects.
+    """
+    for i in range(axs.shape[0]):
+        for j in range(axs.shape[1]):
+            ax: Axes = axs[i, j]
+            if j != 0:
+                ax.set_ylabel("")
+                ax.set_yticklabels([])
+            if i != axs.shape[0] - 1:
+                ax.set_xlabel("")
+                ax.set_xticklabels([])
 
 
 def finalize_weeks_postpartum_plots(ax: Axes, span_label: str = "Pregnancy"):
     """
     Add a gray span (rectangle) denoting the pregnancy period and rename the x-label "Week postpartum".
-    Remove top right spines and ticks.
+    Remove top and right spines and ticks.
     """
     ax.set_xlabel("Week postpartum", fontsize=14)
     ax.axvspan(-38, 0, color='dimgray', alpha=0.1, zorder=-20, label=span_label)
@@ -46,155 +113,15 @@ def finalize_weeks_postpartum_plots(ax: Axes, span_label: str = "Pregnancy"):
     remove_top_right_frame([ax])
 
 
-# TODO reconsider name
-def finalize_preg_panel(ax: Axes, span_label: str = "Pregnancy", xverts: tuple[float, ...] = ()):
+def plot_colored_series(ax: Axes, df: pd.DataFrame, color_map: Union[str, Colormap], ylabel: Union[str, None] = None):
     """
-    Add a gray span (rectangle) denoting the pregnancy period and vertical dashed lines at the given xverts.
-    :param ax:
-    :param span_label:
-    :param xverts:
-    :return:
+
+    :param ax: Axes to plot on
+    :param df: The dataframe with columns as valid lab test names and index measured in weeks postpartum used for the x-axis.
+    Each column is assigned a different color and the values are plotted on the y-axis. Label is the series name after transforming to the short name.
+    :param color_map: The colormap to use for the colors. See matplotlib's "Colormaps" for more info.
+    :param ylabel: Optional label for the y-axis.
     """
-    for xvert in xverts:
-        ax.axvline(x=xvert, color='k', linestyle='--', lw=0.2, alpha=0.1)
-    if xverts:
-        ax.set_xticks(xverts)
-    else:
-        ax.set_xticks(np.arange(-50, 100, 50))
-    finalize_weeks_postpartum_plots(ax, span_label)
-
-    ax.tick_params(axis='both', which='major', labelsize=6)
-
-
-# TODO delete
-# def plot_series_seq(series_seq: Sequence[pd.Series], n_cols=6, ylabel=None) -> (plt.Figure, Axes):
-#     """
-#     Line plot a series index on the x-axis and values on the y-axis. Axes are not shared.
-#     Index is expected to be numerical "weeks postpartum" (with deliver at 0) with a gray rectangle denoting pregnancy period.
-#     The series MUST be named with a valid lab test file name.
-#     It is possible to add an identical y label for all subplots.
-#     :return: The figure and the axes object
-#     """
-#     axes, fig, n = _grid_by_seq(n_cols, series_seq)
-#     for i, (ax, series) in enumerate(zip(axes.flat, series_seq)):
-#         if not series.empty:
-#             ax.plot(series.index, series.values, color="k", lw=0.5)
-#             finalize_preg_panel(ax, "Pregnancy")
-#             if ylabel is not None:
-#                 ax.set_ylabel(ylabel, fontsize=10)
-#         ax_name = translate_long_to_short_lab([series.name]).iloc[0]
-#         ax.annotate(ax_name, (0.05, 1.05), xycoords='axes fraction', fontsize=10, color='k')
-#         remove_x_labels = i < (n - n_cols)
-#         # Remove y-label if series has no data or x label if it's not the last row
-#         remove_ax_labels_and_ticks(ax, remove_x=remove_x_labels, remove_y=series.empty)
-#     plt.tight_layout()
-#     return fig, axes
-
-
-def plot_df_seq(group_name: str, test_names: Sequence[str], df_seq: Sequence[Union[pd.Series, pd.DataFrame]],
-                n_cols: int = 6, ylabel="age") -> plt.Figure:
-    """
-    Line plot a sequence of dataframes with the same index and give all the same y-label. The columns are the labels in the legend.
-    Plot all the dataframe's columns in the same subplot.
-    :param group_name: Name to appear on the figure
-    :param test_names: Names of all the tests in the dataframe sequence. Length MUST be identical to df_seq. The test name annotates the subplot.
-    :param df_seq: A sequence of dataframes with strictly numerical values.
-    :param n_cols: Number of columns in the grid
-    :param ylabel: A single y-label for all the subplots.
-    :return: Tuple of the figure and the axes object
-    """
-    axes, fig, n = _create_grid_from_seq(n_cols, df_seq)
-    for i, (ax, df) in enumerate(zip(axes.flat, df_seq)):
-        remove_x_labels = i < (n - n_cols)
-        plot_single_test_df(ax, df, test_names[i], ylabel, remove_x_labels)
-    for ax in axes.flat[n:]:
-        ax.set_visible(False)
-    fig.suptitle(f"System: {group_name}", fontsize=16, y=1.0)
-    handles, labels = fig.axes[0].get_legend_handles_labels()
-    fig.legend(handles=handles[:3], labels=labels[:3], loc="lower right")
-    plt.tight_layout()
-    return fig
-
-
-def plot_single_test_df(ax: Axes, pd_obj: Sequence[Union[pd.DataFrame, pd.Series]], test_name: str, ylabel: str,
-                        remove_x_labels: bool = False, annotation_coords: tuple[float, float] = (0.05, 1.05)):
-    """
-    Line plot either all the columns of a dataframe in a single subplot or a single series.
-    :param ax: Axes object of the subplot
-    :param pd_obj: Data to plot. Both index and values have to be numerical. If a series, does not have to be named.
-    :param test_name: MUST be a valid lab test file name. The short version annotates the subplot.
-    :param ylabel: Y-label text
-    :param remove_x_labels: If the x labels and ticks should be removed from the x-axis.
-    :param annotation_coords: Where to add the test name. Units are in 'axes fraction'. See matplotlib documentation Axes.annotate.
-    :return:
-    """
-    if isinstance(pd_obj, pd.Series):
-        ax.plot(pd_obj.index, pd_obj.values, color='r', lw=0.5)
-    elif isinstance(pd_obj, pd.DataFrame):
-        for j, col in enumerate(pd_obj.columns):
-            ax.plot(pd_obj.index, pd_obj[col].values, color=_COLORS[j], lw=0.5, label=col)
-    else:
-        raise TypeError(f"pd_obj must be a pandas Series or DataFrame, got {type(pd_obj)} instead")
-    finalize_preg_panel(ax, "Pregnancy", (-38, -25, 0, 10))
-    if ylabel is not None:
-        ax.set_ylabel(ylabel, fontsize=10)
-    ax_name = translate_long_to_short_lab([test_name]).iloc[0]
-    ax.annotate(ax_name, annotation_coords, xycoords='axes fraction', fontsize=10, color='k', ha="right")
-    remove_ax_labels_and_ticks(ax, remove_x=remove_x_labels)
-
-
-# TODO consider delete
-# def plot_linear(ax, line_x_points, rev_model, x_ticks=None, extra_points=None, xlabel="Age",
-#                 ylabel="test units", c="k"):
-#     if rev_model is not None:
-#         line_y_points = rev_model(line_x_points)
-#         ax.plot(line_x_points, line_y_points, color=c, lw=0.5)
-#         if extra_points is not None:
-#             ax.scatter(extra_points[0], extra_points[1], c=c, s=10)
-#     if x_ticks is not None:
-#         ax.set_xticks(x_ticks)
-#     ax.set_xlabel(xlabel)
-#     ax.set_ylabel(ylabel)
-#     ax.set_facecolor('w')
-#     remove_top_right_frame([ax])
-
-# TODO consider delete
-# def plot_tests_labnorm_age_on_ax_color_mapper(test_names: Sequence[str], ax, colormap=None, normalize=False,
-#                                               color=None):
-#     """
-#
-#     :param test_names:
-#     :param ax:
-#     :param colormap:
-#     :param normalize:
-#     :param color:
-#     :return:
-#     """
-#     norm = Normalize(vmin=0, vmax=len(test_names) - 1, clip=True)
-#     if colormap is None:
-#         color_mapper = cm.ScalarMappable(norm=norm, cmap="turbo")
-#     else:
-#         color_mapper = cm.ScalarMappable(norm=norm, cmap=colormap)
-#     pd_series = []
-#     for test_name in test_names:
-#         labnorm_predict = predict_pregnancy_age_per_test(test_name, preconception_predictor=False)
-#         # TODO extract, not in a plotting function
-#         if normalize:
-#             labnorm_predict = labnorm_predict / labnorm_predict.abs().max()
-#         pd_series.append(labnorm_predict)
-#     df = pd.concat(pd_series)
-#     if color is None:
-#         for i, test_name in enumerate(test_names):
-#             ax.plot(labnorm_predict.index, labnorm_predict.values, c=color, lw=0.5, alpha=0.5)
-#             coord = np.abs(labnorm_predict.values).argmax()
-#             ax.text(labnorm_predict.index[coord], labnorm_predict.values[coord],
-#                     translate_long_to_short_lab([test_name]).item(), ha='center', fontsize=10, color=color)
-#     else:
-#         plot_color_mapper_on_axes(ax, df, color_mapper=color_mapper)
-#     finalize_preg_panel(ax, "Pregnancy")
-
-
-def plot_color_mapper_on_axes(ax: Axes, df: pd.DataFrame, color_map: Union[str, Colormap] = "turbo"):
     test_names = df.columns
     test_names_annotate = translate_long_to_short_lab(test_names).values
     norm = Normalize(vmin=0, vmax=len(test_names) - 1, clip=True)
@@ -205,32 +132,8 @@ def plot_color_mapper_on_axes(ax: Axes, df: pd.DataFrame, color_map: Union[str, 
         c = color_mapper.to_rgba(np.array(i))
         ax.text(ser.index[coord], ser.values[coord], test_names_annotate[i], ha='center', fontsize=12, color=c)
         ax.plot(df.index, ser, c=c, lw=1, alpha=0.5)
-        ax.set_ylabel("Effective age difference (year)")
-
-
-# TODO delete
-# def plot_tests_trends(json_path=os.path.join("csvs", "tests_trends.json"), normalize=True):
-#     with open(json_path, "r") as f:
-#         trends = json.load(f)
-#     ncols = 2
-#     nrows = len(trends)
-#     fig, axes = plt.subplots(nrows, ncols, figsize=(ncols * 3.9, nrows * 3))
-#     for i, (group_name, trend_tests) in enumerate(trends.items()):
-#         for j, (trend, sig_tests) in enumerate(trend_tests.items()):
-#             ax = axes[i][j]
-#             for sig_test in sig_tests:
-#                 if sig_test["is_sig"]:
-#                     plot_tests_labnorm_age_on_ax_color_mapper(sig_test["tests"], ax, normalize=normalize)
-#                 else:
-#                     plot_tests_labnorm_age_on_ax_color_mapper(sig_test["tests"], ax, normalize=True,
-#                                                               color="gray")
-#         axes[i][0].annotate(group_name + ":", (0.05, 1.05), xycoords='axes fraction', fontsize=12, color='k',
-#                             ha="right")
-#
-#     fig.suptitle("Trends", fontsize=16, y=1.0)
-#     fig.subplots_adjust(wspace=0.1, hspace=1.8)
-#     plt.tight_layout()
-#     return fig, axes
+        if ylabel is not None:
+            ax.set_ylabel(ylabel)
 
 
 def plot_quantile_diffs_histogram(test_names: Sequence[str], test_period: tuple[float, float] = (-40., 0.),
@@ -287,7 +190,8 @@ def plot_quantile_diffs_pregnancy_ref(ax: Axes, test_names: Sequence[str],
                     textcoords="offset points", xytext=(5, 5), ha='center')
 
 
-def plot_diff_pathologies(ax: Axes, test_names: Sequence[str], pathology_path: str, healthy_path: str,
+def plot_diff_pathologies(ax: Axes, test_names: Sequence[str], pathology_path: str,
+                          healthy_path: Union[str, None] = None,
                           test_period: tuple[float, float] = (-40., 0.), labnorm_age_ref: tuple[int, int] = (20, 80),
                           c="k"):
     """
@@ -296,9 +200,9 @@ def plot_diff_pathologies(ax: Axes, test_names: Sequence[str], pathology_path: s
     :param ax: The subplot axes to plot on.
     :param test_names: Sequence of lab test names (valid file names) to plot.
     :param pathology_path: Path to Clalit directory with valid CSVs of the pathology data.
-    :param healthy_path: Path to Clalit directory with valid CSVs of the healthy data.
+    :param healthy_path: Path to Clalit directory with valid CSVs of the healthy data. If none, uses default.
     :param test_period: Time to consider for the pregnancy period in "weeks postpartum". Default is [-40., 0.] which is gestation.
-    :param labnorm_age_ref: Old and young bracket to consider for the aging difference. Default is [20, 80].
+    :param labnorm_age_ref: A 2-tuple of ints. see `find_labnorm_amplitude` for more info.
     :param c: Color of the markers. See matplotlib's "Specifying colors" for more info.
     """
     for test_name in test_names:
@@ -310,12 +214,20 @@ def plot_diff_pathologies(ax: Axes, test_names: Sequence[str], pathology_path: s
         ax.annotate(translate_long_to_short_lab([test_name]).item(), (diff_labnrom, path_diff_at_max_mean),
                     fontsize=13,
                     textcoords="offset points", xytext=(5, 5), ha='center')
-    style_quartile_plots(ax, f"Reference quantile difference")
+    style_quadrant_plots(ax, f"Reference quantile difference")
 
 
 def plot_quantile_diff_pregnancy_model_weights(ax: Axes, test_names: Sequence[str],
                                                model: lm.RegressionResults,
                                                test_period: tuple[float, float] = (-40., 0.)):
+    """
+    Quadrant plot with the model weights on the x-axis and the max difference in quantiles during pregnancy on the y-axis.
+    :param ax: An axes object for a single quadrant.
+    :param test_names: Sequence of valid lab test names
+    :param model: Trained linear model. Parameters MUST match the
+    :param test_period:
+    :return:
+    """
     model_weights = calculate_model_weights_ci(model)
     for test_name in test_names:
         weight = model_weights.loc[test_name, "value"]
@@ -323,126 +235,100 @@ def plot_quantile_diff_pregnancy_model_weights(ax: Axes, test_names: Sequence[st
         top_ci = model_weights.loc[test_name, "top_ci"] - weight
         pregnancy_diff, pregnancy_sd = find_pregnancy_amplitude(test_name, test_period)
         ax.errorbar(weight, pregnancy_diff, xerr=np.array((bottom_ci, top_ci)).reshape(-1, 1), yerr=2 * pregnancy_sd,
-                    c="k", markersize=5,
-                    fmt="o")
+                    c="k", markersize=5, fmt="o", capsize=3)
         ax.annotate(translate_long_to_short_lab([test_name]).item(), (weight, pregnancy_diff), fontsize=13,
                     textcoords="offset points", xytext=(5, 5), ha='center')
-    style_quartile_plots(ax, f"Linear model weight", False)
-
-
-def style_quartile_plots(ax: Axes, xlabel: str, same_scale: bool = True):
-    if same_scale:
-        max_xy = np.abs(ax.get_xlim() + ax.get_ylim()).max()  # plus sign is concatenation
-        max_xy *= 1.05  # add margin
-        ax.set_xlim(-max_xy, max_xy)
-        ax.set_ylim(-max_xy, max_xy)
-        ax.plot([-max_xy, max_xy], [-max_xy, max_xy], '--', c="gainsboro", lw=0.5)
-        ax.plot([-max_xy, max_xy], [max_xy, -max_xy], '--', c="gainsboro", lw=0.5)
-        max_x = max_xy
-        max_y = max_xy
-    else:
-        max_x = np.abs(ax.get_xlim()).max() * 1.05
-        max_y = np.abs(ax.get_ylim()).max() * 1.05
-        ax.set_xlim(-max_x, max_x)
-        ax.set_ylim(-max_y, max_y)
-
-    # 1st
-    ax.fill_between([0, max_x], max_y, color='orangered', alpha=0.05)
-    # 2nd
-    ax.fill_between([-max_x, 0], max_y, color='lightgreen', alpha=0.05)
-    # 3rd
-    ax.fill_between([-max_x, 0], -max_y, color='orangered', alpha=0.05)
-    # 4th
-    ax.fill_between([0, max_x], -max_y, color='lightgreen', alpha=0.05)
-    ax.annotate("aging", xy=(max_x / 2, max_y / 2), fontsize=12, color='k',
-                ha='center')
-    ax.annotate("rejuvenation", xy=(-max_x / 2, max_y / 2), fontsize=12,
-                color='k', ha='center')
-    ax.axhline(y=0, color='k', lw=0.5)
-    ax.axvline(x=0, color='k', lw=0.5)
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel(f"Pregnancy max quantile difference")
-
-
-def grid_test_groups(test_groups_keys: Sequence[str], ncols: int) -> (plt.Figure, Sequence[Sequence[Axes]]):
-    nrows = (len(test_groups_keys) - 1) // ncols + 1
-    fig, axs = plt.subplots(nrows=nrows, ncols=ncols, figsize=(5 * ncols, 5 * nrows))
-    flattened_axs: Sequence[Axes] = axs.flatten()
-    # Remove axes for any unused subplots
-    for i in range(0, len(flattened_axs)):
-        if i < len(test_groups_keys):
-            flattened_axs[i].annotate(test_groups_keys[i], xy=(0.05, 1.05), xycoords='axes fraction', fontsize=16)
-        else:
-            flattened_axs[i].axis('off')
-    return fig, axs
+    style_quadrant_plots(ax, f"Linear model weight", same_scale=False)
 
 
 def plot_diff_grid(test_groups: dict[str, Sequence[str]], labnorm_age_ref: tuple[int, int] = (20, 80),
-                   test_period: tuple[float, float] = (-40, 0), ncols: int = 3, clalit_path: Union[str, None] = None,
-                   margin: float = 0.05) -> plt.Figure:
+                   test_period: tuple[float, float] = (-40, 0), ncols: int = 3,
+                   clalit_path: Union[str, None] = None) -> plt.Figure:
+    """
+    Create a grid of subplots with the test groups as the title of each subplot.
+    Each subplot is the quantile difference in pregnancy (y-axis) vs. the quantile difference in aging (x-axis).
+    :param test_groups: Mapping from group name to the lab tests, which are valid lab test file names.
+    :param labnorm_age_ref: A 2-tuple of ints. see `find_labnorm_amplitude` for more info.
+    :param test_period: A 2-tuple of the duration of pregnancy, in `week postpartum` unit.
+    :param ncols: Number of columns in the grid
+    :param clalit_path: Path to Clalit directory with valid CSVs of the data. If none, uses default.
+    :return:
+    """
     fig, axs = grid_test_groups(tuple(test_groups.keys()), ncols)
     flattened_axs: Sequence[Axes] = axs.flatten()
     for i, group in enumerate(test_groups):
         plot_quantile_diffs_pregnancy_ref(flattened_axs[i], test_groups[group], labnorm_age_ref, test_period,
                                           clalit_path)
-    min_x, min_y = np.inf, np.inf
-    max_x, max_y = -np.inf, -np.inf
-    for ax in flattened_axs:
-        min_x = min(min_x, ax.get_xlim()[0])
-        max_x = max(max_x, ax.get_xlim()[1])
-        min_y = min(min_y, ax.get_ylim()[0])
-        max_y = max(max_y, ax.get_ylim()[1])
-    for i in range(axs.shape[0]):
-        for j in range(axs.shape[1]):
-            ax: Axes = axs[i, j]
-            ax.set_xlim(min_x - margin, max_x + margin)
-            ax.set_ylim(min_y - margin, max_y + margin)
-            style_quartile_plots(ax, f"Reference quantile difference")
-            if j != 0:
-                ax.set_ylabel("")
-                ax.set_yticklabels([])
-            if i != axs.shape[0] - 1:
-                ax.set_xlabel("")
-                ax.set_xticklabels([])
+        style_quadrant_plots(flattened_axs[i], f"Reference quantile difference")
+    remove_grid_labels(axs)
     return fig
 
 
-def plot_diff_grid_pathologies(test_groups: dict[str, Sequence[str]], pathology_path: str, healthy_path: str,
+def plot_diff_grid_pathologies(test_groups: dict[str, Sequence[str]], pathology_path: str,
+                               healthy_path: Union[str, None] = None,
                                labnorm_age_ref: tuple[int, int] = (20, 80),
-                               test_period: tuple[float, float] = (-40., 0.), ncols: int = 3, color="k"):
+                               test_period: tuple[float, float] = (-40., 0.), ncols: int = 3, color="k") -> plt.Figure:
+    """
+    Compare pathology minus healthy quantile difference (y-axis) vs. the quantile change in aging (x-axis) for each lab test group.
+    :param test_groups: Mapping from group name to the lab tests, which are valid lab test file names.
+    :param pathology_path: Path to a directory of valid lab test file names of a certain pathology.
+    :param healthy_path: Path to a directory of valid lab test file names of a certain pathology.
+    :param labnorm_age_ref: A 2-tuple of ints. see `find_labnorm_amplitude` for more info.
+    :param test_period: The period to consider for the pregnancy period in "weeks postpartum". Default is pregnancy only from -40 weeks to 0 (delivery)
+    :param ncols: Number of columns in the grid
+    :param color: Color of the markers and error bars. See matplotlib's "Specifying colors" for more info.
+    :return: The matplotlib figure.
+    """
     fig, axs = grid_test_groups(tuple(test_groups.keys()), ncols)
+    flattened_axs = axs.flatten()
     for i, group in enumerate(test_groups):
-        row = i // axs.shape[0]
-        col = i % axs.shape[1]
-        ax: Axes = axs[row, col]
-        plot_diff_pathologies(ax, test_groups[group], pathology_path, healthy_path, test_period,
-                              labnorm_age_ref, color)
-        if col != 0:
-            ax.set_ylabel("")
-        if row != axs.shape[0] - 1:
-            ax.set_xlabel("")
+        ax: Axes = flattened_axs[i]
+        plot_diff_pathologies(ax, test_groups[group], pathology_path, healthy_path, test_period, labnorm_age_ref, color)
+    remove_grid_labels(axs)
     return fig
 
 
-def plot_diff_grid_model(test_groups: dict[str, Sequence[str]], model: lm.RegressionResults,
-                         test_period: tuple[float, float] = (-40., 0.), ncols: int = 3) -> plt.Figure:
+def plot_diff_grid_model_weights(test_groups: dict[str, Sequence[str]], model: lm.RegressionResults,
+                                 test_period: tuple[float, float] = (-40., 0.), ncols: int = 3) -> plt.Figure:
+    """
+    Plot the change in quantiles in pregnancy vs the model weights.
+    :param test_groups: Mapping from group name to the lab tests, which are valid lab test file names.
+    :param model: SHOULD be trained on normalized data. MUST include all tests in the test_groups.
+    :param test_period: The period to consider for the pregnancy period in "weeks postpartum". Default is pregnancy only from -40 weeks to 0 (delivery)
+    :param ncols: number of columns
+    :return: The figure
+    """
     fig, axs = grid_test_groups(tuple(test_groups.keys()), ncols)
     flattened_axs = axs.flatten()
     for i, group in enumerate(test_groups):
         plot_quantile_diff_pregnancy_model_weights(flattened_axs[i], test_groups[group], model, test_period)
+    remove_grid_labels(axs)
     return fig
 
 
 def plot_groups_linear_prediction(test_groups: dict[str, Sequence[str]], model_parameters_ser: pd.Series,
                                   preconception_period: tuple[float, float] = (-60., -40.), ncols: int = 3,
-                                  clalit_field: str = "val_mean", skip_range: Union[tuple[float, float], None] = None,
-                                  colormap: Union[str, Colormap, None] = None):
+                                  skip_range: Union[tuple[float, float], None] = None,
+                                  colormap: Union[str, Colormap] = "turbo",
+                                  ylabel: str = "Effective age difference (year)") -> plt.Figure:
+    """
+    For each system ("group"), plot the contribution of each lab test individually and combined per system for the age prediction.
+    The prediction is simply linear combination of the weights and the data points for each week.
+    :param test_groups: Mapping from group name to the lab tests, which are valid lab test file names.
+    :param model_parameters_ser: The weights of the model. The index is valid lab test file names.
+    :param preconception_period: Used to normalize the prediction (subtract the mean of the preconception period).
+    :param ncols: Number of columns
+    :param skip_range: A range of weeks to skip in the plot (do not use prediction in this range). Default is None.
+    :param colormap: A matplotlib colormap, also in string form.
+    :param ylabel: The label on the y-axes. of all subplots.
+    :return: The matplotlib figure.
+    """
     fig, axs = grid_test_groups(tuple(test_groups.keys()), ncols)
     flattened_axs = axs.flatten()
     for i, group in enumerate(test_groups):
         ax: Axes = flattened_axs[i]
         tests_to_consider = test_groups[group]
-        group_df = get_data_by_tests_and_field(tests_to_consider, clalit_field)
+        group_df = get_data_by_tests_and_field(tests_to_consider, "val_mean")  # Weekly mean values, not quantiles
         considered_parameters = model_parameters_ser[tests_to_consider]
         prediction = group_df @ considered_parameters
         prediction -= prediction.loc[preconception_period[0]:preconception_period[1]].mean()
@@ -452,79 +338,50 @@ def plot_groups_linear_prediction(test_groups: dict[str, Sequence[str]], model_p
             prediction = prediction.loc[~prediction.index.isin(prediction.loc[slice(*skip_range)].index)]
             individual_predictions = individual_predictions.loc[
                 ~individual_predictions.index.isin(individual_predictions.loc[slice(*skip_range)].index)]
-        if colormap is not None:
-            plot_color_mapper_on_axes(ax, individual_predictions, colormap)
-        else:
-            plot_color_mapper_on_axes(ax, individual_predictions)
+        plot_colored_series(ax, individual_predictions, colormap, ylabel)
         ax.plot(prediction.index, prediction.values, color='k', lw=1,
                 label="Group contribution" if i == 0 else None)
         finalize_weeks_postpartum_plots(ax)
     fig.legend(loc="lower right", fontsize=12)
-    return fig, axs
+    return fig
 
 
-# TODO delete
-# def plot_test_with_linear_models(group_name, test_names: Sequence[str]):
-#     ncols = 3
-#     nrows = len(test_names)
-#     fig, axes = plt.subplots(nrows, ncols, figsize=(ncols * 2.6, nrows * 2))
-#     for i, test_name in enumerate(test_names):
-#         labnorm_model, (labnorm_val_train, labnorm_age_train) = model_labnorm_linreg(test_name)
-#         age_predictions_df = predict_pregnancy_age_per_test(test_name, labnorm_predictor=labnorm_model,
-#                                                             preconception_predictor=False)
-#         median_test_values = get_clalit_data(test_name)["val_50"]
-#         edge_ages = [15, 61]
-#         age_ticks = np.arange(edge_ages[0], edge_ages[1], 15)
-#         reverse_labnorm_model = reverse_1d_linear_model(labnorm_model)
-#         labnorm_age_to_median = find_median_for_lab(test_name)
-#         labnrom_r_pvalue = pearsonr(labnorm_age_to_median.index, labnorm_age_to_median.values).pvalue
-#         labnorm_spearman_stat = spearmanr(labnorm_age_to_median.index, labnorm_age_to_median.values).statistic
-#         for j in range(ncols):
-#             ax: Axes = axes[i][j]
-#             if j == 0:
-#                 plot_single_test_df(ax, age_predictions_df, test_name, "age")
-#                 if i == 0:
-#                     ax.set_title("Predicted Age", fontsize=12, y=1.08)
-#             elif j == 1:
-#                 ax.plot(median_test_values.index, median_test_values.values, color="k", lw=0.5)
-#                 finalize_preg_panel(ax, "Pregnancy")
-#                 if i == 0:
-#                     ax.set_title("Test Value", fontsize=12, y=1.08)
-#             elif j == 2:
-#                 # Colors indexing is bad and likely cause confusion with each change
-#                 plot_linear(ax, edge_ages, reverse_labnorm_model, x_ticks=age_ticks,
-#                             extra_points=(labnorm_age_train, labnorm_val_train), c=_COLORS[0])
-#                 ax.plot(labnorm_age_to_median.index, labnorm_age_to_median.values, c=_COLORS[0], lw=0.5, alpha=0.3)
-#                 ax.annotate(f"Pear. p-val: {labnrom_r_pvalue:.2f}\nSpearman: {labnorm_spearman_stat:.2f}", (0.05, 0.95),
-#                             va="bottom",
-#                             xycoords='axes fraction', fontsize=8, color='k')
-#                 if i == 0:
-#                     ax.set_title("Labnorm Linear Model", fontsize=12, y=1.08)
-#     fig.suptitle(f"System: {group_name}", fontsize=16, y=1.0)
-#     fig.subplots_adjust(wspace=0.1, hspace=0.1)
-#     plt.tight_layout()
-#     return fig, axes
-
-def plot_age_acceleration_by_lin_reg(model: lm.RegressionResults, relative_path: str, compared_paths: Collection[str],
-                                     sample_size: int = 1000, exclude_points: Union[Iterable[float], None] = None,
+def plot_age_acceleration_by_lin_reg(model: lm.RegressionResults, compared_paths: Collection[str],
+                                     healthy_path: Union[str, None] = None, sample_size: int = 1000,
+                                     exclude_points: Union[Iterable[float], None] = None,
                                      compared_color_map: Union[dict[str, str], None] = None,
                                      p_val_bins: Union[Sequence[float], None] = None, use_fill: bool = False,
                                      y_limit: Union[tuple[float, float], None] = None,
                                      y_ticks: Union[Iterable[float], None] = None, fix_outliers: bool = False,
                                      fig_width: float = 12, subplot_height: float = 5.8) -> plt.Figure:
+    """
+    For each pathology given, plot the `pathology minus healthy` prediction. Check for significantly greater than zero change, meaning aging effect is significant.
+    :param model: The linear model.
+    :param compared_paths: Paths to Clalit directory with valid CSVs, SHOULD be of known pathologies.
+    :param healthy_path: Path to Clalit directory with valid CSVs of the healthy data. If none, uses default.
+    :param sample_size: Number of predictions to generate (used in error estimation)
+    :param exclude_points: An exact iterable of points to remove from the prediction. If point does not exist in the prediction, it is skipped.
+    :param compared_color_map: A mapping from pathology to its color in the plot. If specified, MUST have the same length of `compared_paths` and the same order of pathologies. Pathology names are the keys. If unspecified, the color is inferred by order from matplotlib's `tab10` and pathology names is inferred from the paths.
+    :param p_val_bins: A sequenece of limits where the predictions are pooled together to extract a p-value. If none, checks signficance for each point individually.
+    :param use_fill: It true, error is a fill around the line. If false, use error bars.
+    :param y_limit: Limit for all y-axes.
+    :param y_ticks: y-ticks for all y-axes.
+    :param fix_outliers: Fix outliers in the Clalit data. An outlier weekly bin has a difference between the 95,5 percentiles much smaller than the standard deviation.
+    :param fig_width: In inches
+    :param subplot_height: In inches
+    :return: the matplotlib figure
+    """
     if compared_color_map is not None and len(compared_color_map) != len(compared_paths):
         raise ValueError("compared_color_map must have the same length as compared_paths")
     # The compared medical conditions are either given in the key map or parsed from the paths
     conditions = list(compared_color_map.keys()) if compared_color_map is not None else [None] * len(compared_paths)
-    # agg_preds = {}
     unagg_preds = {}
     for i, compared_path in enumerate(compared_paths):
-        agg_pred, unagg_pred = predict_age_in_pregnancy(model, relative_path, sample_size, exclude_points, fix_outliers,
-                                                        compared_path)
+        unagg_pred = predict_age_in_pregnancy(model, healthy_path, sample_size, exclude_points, fix_outliers,
+                                              compared_path)
         if conditions[i] is None:
             conditions[i] = get_condition_from_filename(compared_path)
         condition = conditions[i]
-        # agg_preds[condition] = agg_pred
         unagg_preds[condition] = unagg_pred
     unagg_preds = pd.concat(unagg_preds, names=['condition'])
     # Figure preparation
@@ -665,20 +522,12 @@ def plot_model_prediction(model: lm.RegressionResults, test_path: Union[None, st
     :param alpha: Transparency (1 no transparency, 0 full transparency) of the fill color. If `use_fill=False` the value is unused.
     :return:
     """
-    pred, unagg_pred = predict_age_in_pregnancy(model, test_path, sample_size, exclude_points, fix_outliers)
+    unagg_pred = predict_age_in_pregnancy(model, test_path, sample_size, exclude_points, fix_outliers)
     if baseline is not None:
         unagg_pred.loc[:] -= unagg_pred.loc[slice(*baseline)].mean()
-    # TODO delete after testing
-    # if ax is None:
-    #     fig, ax = plt.subplots()
-    # else:
-    #     fig = None
     if use_fill:
         err_style = "band"
         err_kws = {"alpha": 2 * alpha}
-    #     color = ax.plot(pred.index, pred["age"], '-', color=color, label=label, alpha=2 * alpha)[0].get_color()
-    #     ax.fill_between(pred.index, pred["age"] - pred["sd"] * 1.96,
-    #                     pred["age"] + pred["sd"] * 1.96, alpha=alpha, color=color)
     else:
         err_style = "bars"
         err_kws = {"fmt": "o-"}
@@ -691,14 +540,3 @@ def plot_model_prediction(model: lm.RegressionResults, test_path: Union[None, st
         finalize_weeks_postpartum_plots(ret_ax)
     ret_ax.legend(loc="lower right")
     return plt.gcf(), ret_ax
-
-
-def _create_grid_from_seq(ncols, series_seq, panel_size=2.) -> (Axes, plt.Figure, int):
-    n = len(series_seq)
-    nrows = (n - 1) // ncols + 1
-    fig, axes = plt.subplots(nrows, ncols, figsize=(ncols * panel_size, nrows * panel_size))
-    # Remove axes for any unused subplots
-    for i, ax in enumerate(axes.flatten()):
-        if i >= n:
-            ax.axis('off')
-    return axes, fig, n

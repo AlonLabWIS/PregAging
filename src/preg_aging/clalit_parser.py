@@ -5,6 +5,7 @@ from typing import Union, Sequence, Hashable
 import pandas as pd
 
 from . import cached_reader
+
 # from .analyses import recalculate_mean_sd_lin_approx  # TODO: circular import with analyses.py
 
 _RANGE_RE = re.compile(r"\[(-?\d+),(-?\d+)[)\]]")
@@ -17,6 +18,7 @@ _METADATA_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "csvs", "Me
 def get_metadata(metadata_path=_METADATA_PATH):
     return cached_reader(metadata_path, index_col=0)
 
+
 def get_condition_from_filename(file_name):
     m = re.match(r"^pregnancy\.(.\w*)\.?\dw$", file_name)
     cond_dict = {"pre-eclampsia": "Pre-ecl",
@@ -25,19 +27,23 @@ def get_condition_from_filename(file_name):
     if m is not None:
         return cond_dict.get(m.group(1), "")
 
+
 def translate_long_to_short_lab(long_names: Union[Hashable, Sequence[Hashable]]) -> pd.Series:
     metadata = get_metadata()
     return metadata.loc[long_names, "Short name"]
+
 
 def translate_long_to_labnorm_name(long_names: Union[Hashable, Sequence[Hashable]]) -> pd.Series:
     metadata = get_metadata()
     return metadata.loc[long_names, "LabNorm name"]
 
+
 def translate_long_to_nice_name(long_names: Union[Hashable, Sequence[Hashable]]) -> pd.Series:
     metadata = get_metadata()
     return metadata.loc[long_names, "Nice name"]
 
-def group_tests(tests:list[str] = None):
+
+def group_tests(tests: list[str] = None):
     metadata = get_metadata()
     if tests is not None:
         metadata = metadata.loc[metadata.index.intersection(tests)]
@@ -86,6 +92,7 @@ def get_mean_age_pre_conception(test_name, min_week=-60, max_week=-40):
     grouped = df.groupby(level="age_group")
     return grouped.apply(mean_by_col).droplevel(None)
 
+
 def get_data_by_tests_and_field(tests: Sequence[str], field: str):
     sers = []
     for test in tests:
@@ -94,24 +101,6 @@ def get_data_by_tests_and_field(tests: Sequence[str], field: str):
         sers.append(ser)
     return pd.concat(sers, axis=1)
 
-
-# def recalculate_mean_sd_bad_tests(test_name, test_df: pd.DataFrame,
-#                                   test_sem_thresholds={"BMI": 0.3, "CK_CREAT": 10,
-#                                                        "LACTIC_DEHYDROGENASE_LDH__BLOOD": 4.5},
-#                                   sd_column="val_sd", n_column="val_n", mean_column="val_mean"):
-#     test_df = test_df.copy()
-#     if test_name not in test_sem_thresholds:
-#         return test_df
-#     sem = test_df[sd_column] / test_df[n_column] ** 0.5
-#     # TODO argument where sem is bad
-#     bad_sem_indices = sem.index[sem > test_sem_thresholds[test_name]]
-#     quantiles, columns = _get_quantiles_from_column_names(test_df.columns)
-#     sorted_quantiles = np.argsort(quantiles)
-#     columns = np.array(columns)[sorted_quantiles]
-#     quantiles = np.array(quantiles)[sorted_quantiles]
-#     mean, sd = recalculate_mean_sd_lin_approx(quantiles, test_df.loc[bad_sem_indices, columns].values)
-#     test_df.loc[bad_sem_indices, [mean_column, sd_column]] = np.stack([mean, sd], axis=1)
-#     return test_df
 
 def join_weekly_bins(test_name, num_bins_to_join=2):
     df = get_clalit_age_data(test_name)

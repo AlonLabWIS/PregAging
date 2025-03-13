@@ -2,7 +2,6 @@ from typing import Union, Sequence, Iterable
 
 import pandas as pd
 import numpy as np
-from patsy.eval import test_ast_names
 from sklearn.linear_model import LinearRegression
 from scipy.stats import norm, false_discovery_control
 import statsmodels.api as sm
@@ -10,20 +9,6 @@ import statsmodels.regression.linear_model as lm
 
 from .clalit_parser import get_clalit_data, get_mean_age_pre_conception, get_quantiles_from_column_names
 from .labnorm_utils import find_median_for_lab, interp_per_age
-
-
-def find_closet_age_median_value(test_name):
-    df = get_clalit_data(test_name)
-    median_reference = _read_labnorm_median(test_name)
-    if median_reference.empty:
-        return median_reference
-    median_value = df["val_50"]
-    week_to_age = {}
-    for gest_week, median_gestational_value in median_value.items():
-        closest_median = (median_reference - median_gestational_value).abs()
-        closest_age = closest_median.idxmin()[0]  # Find the youngest age which minimizes the difference
-        week_to_age[gest_week] = min(closest_age, 85)
-    return pd.Series(week_to_age, index=week_to_age.keys(), name=test_name)
 
 
 def identify_outliers(test_df, v95_v5_to_sd_ratio=10):
@@ -44,62 +29,9 @@ def linearly_fix_outliers(test_df, v95_v5_to_sd_ratio=10):
     return test_df_c
 
 
-def model_labnorm_linreg(test_name, ages=(20, 80)):
-    labnorm_median = _read_labnorm_median(test_name)
-    if labnorm_median.empty:
-        return
-    y_model_vals = np.array(ages)
-    x_model_vals = labnorm_median[y_model_vals]
-    model = LinearRegression().fit(x_model_vals.to_numpy().reshape(-1, 1), y_model_vals)
-    return model, (x_model_vals.values, y_model_vals)
-
-
-def model_preconception_linreg(test_name, max_week=-58):
-    pre_conception_ref = get_mean_age_pre_conception(test_name, max_week=max_week)["val_50"]
-    x_model_vals = pre_conception_ref.to_numpy().reshape(-1, 1)
-    y_model_vals = pre_conception_ref.index  # age group
-    model = LinearRegression().fit(x_model_vals, y_model_vals)
-    return model, (x_model_vals, y_model_vals)
-
-
-def _read_labnorm_median(test_name):
-    try:
-        return find_median_for_lab(test_name)
-    except FileNotFoundError:
-        return pd.Series(name=test_name)
-
-
-def reverse_1d_linear_model(model):
-    if model.coef_ == 0:
-        return None
-    slope = 1 / model.coef_
-    intercept = -model.intercept_ / model.coef_
-
-    def inner(x: np.ndarray):
-        return slope * np.array(x) + intercept
-
-    return inner
-
-
-def predict_pregnancy_age_per_test(test_name, preconception_predictor=None, labnorm_predictor=None):
-    median_test_series = get_clalit_data(test_name)["val_50"]
-    if preconception_predictor is None:
-        preconception_predictor, _ = model_preconception_linreg(test_name)
-    if labnorm_predictor is None:
-        labnorm_predictor, _ = model_labnorm_linreg(test_name)
-    labnorm_predictions = labnorm_predictor.predict(median_test_series.to_numpy().reshape(-1, 1))
-    if preconception_predictor is True:
-        preg_predictions = preconception_predictor.predict(median_test_series.to_numpy().reshape(-1, 1))
-        return pd.DataFrame({"Pre-conception": preg_predictions, "LabNorm": labnorm_predictions},
-                            median_test_series.index)
-    else:
-        return pd.Series(labnorm_predictions, median_test_series.index)
-
-
 def predict_age_in_pregnancy(model: lm.RegressionResults, clalit_path: Union[None, str] = None, sample_size: int = 1000,
                              exclude_points: Union[None, Iterable[float]] = None, fix_outliers: bool = True,
-                             compared_path: Union[None, str] = None) -> (
-        pd.DataFrame, pd.DataFrame):
+                             compared_path: Union[None, str] = None) -> pd.DataFrame:
     """
     Generate a sample per each weekly bin in the dataset based on the mean and standard deviation.
     For each such sample, generate parameters from the regression model based on their value and standard deviation.
@@ -111,24 +43,24 @@ def predict_age_in_pregnancy(model: lm.RegressionResults, clalit_path: Union[Non
     :param exclude_points: Weekly bins to drop. If None, drops none. Otherwise, drops every weekly bin excluded. Values are in `Week postpartum` unit.
     :param fix_outliers: Fix outliers in the Clalit data. An outlier weekly bin has a difference between the 95,5 percentiles much smaller than the standard deviation.
     Mean and standard deviation are re-calculated using linear interpolation of the weekly bin's percentile values to approximate a CDF.
-    :return: A 2-tuple with the first item a DataFrame with column "age" the mean prediction in the weekly bin and "sd" the standard deviation of the prediction. The index is the weekly bin for all tests.
-    The second an unaggregated series named "age" with multiindex. Top level named "week" and second level unnamed.
+    :return: A series named "age" with multiindex. Top level named "week" and second level unnamed, the samples each week numbered 0 up to `sample_size - 1`.
     """
     test_names = model.params.index[model.params.index != "const"]
     if clalit_path is None:
         sampled_preg = sm.add_constant(sample_tests_mean_val(test_names, sample_size, fix_outliers=fix_outliers))
     else:
-        sampled_preg = sm.add_constant(sample_tests_mean_val(test_names, sample_size, clalit_path, fix_outliers=fix_outliers))
+        sampled_preg = sm.add_constant(
+            sample_tests_mean_val(test_names, sample_size, clalit_path, fix_outliers=fix_outliers))
     if compared_path:
-        sampled_preg = sm.add_constant(sample_tests_mean_val(test_names, sample_size, compared_path, fix_outliers=fix_outliers)) - sampled_preg
+        sampled_preg = sm.add_constant(
+            sample_tests_mean_val(test_names, sample_size, compared_path, fix_outliers=fix_outliers)) - sampled_preg
     params = sample_regression_params(model.cov_params(), model.params, sampled_preg.shape[0])
     # Inner product of each pair of rows in the two matrices.
     unagg_pred = pd.Series(data=np.einsum('ij,ij->i', sampled_preg, params), index=sampled_preg.index,
                            name="age")
     if exclude_points is not None:
         unagg_pred = unagg_pred[~unagg_pred.index.isin(exclude_points, 0)]
-    pred = unagg_pred.groupby(level=0).agg(age="mean", sd="std")
-    return pred, unagg_pred
+    return unagg_pred
 
 
 def find_pregnancy_amplitude(test_name, test_period, sample_size=100, clalit_path=None):
@@ -140,7 +72,8 @@ def find_pregnancy_amplitude(test_name, test_period, sample_size=100, clalit_pat
     return amps.mean(), amps.std()
 
 
-def find_diff_amplitude(test_name: str, other_clalit_path: str, test_period: tuple[float, float], sample_size: int = 100,
+def find_diff_amplitude(test_name: str, other_clalit_path: str, test_period: tuple[float, float],
+                        sample_size: int = 100,
                         clalit_path_base: Union[None, str] = None) -> tuple[float, float]:
     """
     Calculate the maximal the amplitude of the difference in mean quantile score between "other" and "base" clalit data.
@@ -176,11 +109,9 @@ def simulate_pregnancy_quantile_data(test_name: str, test_period: tuple[float, f
         df = get_clalit_data(test_name)
     else:
         df = get_clalit_data(test_name, clalit_path)
-    test_qmean = df["qval_mean"].loc[(slice(*test_period), ...), :]
-    test_n = df["val_n"].loc[(slice(*test_period), ...), :]
-    test_qsd = df["qval_sd"].loc[(slice(*test_period), ...), :]
-    return np.random.normal(test_qmean, test_qsd / (test_n ** 0.5),
-                            size=(sample_size, len(test_qmean)))  # shape is sample_size * weeks
+    df_subset = df.loc[slice(*test_period), ["qval_mean", "qval_sd", "val_n"]]
+    return np.random.normal(df_subset["qval_mean"], df_subset["qval_sd"] / (df_subset["val_n"] ** 0.5),
+                            size=(sample_size, df_subset.shape[0]))  # shape is sample_size * weeks
 
 
 def find_labnorm_amplitude(labnorm_age_ref: tuple[float, float], test_name: str, old_neighborhood: int = 5) -> tuple[
