@@ -1,26 +1,35 @@
 import re
 import os
-from typing import Union, Sequence, Hashable
+from typing import Union, Sequence, Hashable, Iterable
 
 import pandas as pd
 
 from . import cached_reader
 
-# from .analyses import recalculate_mean_sd_lin_approx  # TODO: circular import with analyses.py
-
-_RANGE_RE = re.compile(r"\[(-?\d+),(-?\d+)[)\]]")
+_RANGE_RE = re.compile(r"\[(-?\d+),(-?\d+)[)\]]")  # Week regex
 
 _CLALIT_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "csvs", "pregnancy.1w")
 _CLALIT_BY_AGE_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "csvs", "pregnancy.by_age.1w")
 _METADATA_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "csvs", "Metadata.csv")
 
 
-def get_metadata(metadata_path=_METADATA_PATH):
+def get_metadata(metadata_path: str = _METADATA_PATH) -> pd.DataFrame:
+    """
+    Mapping lab test names and units
+    :param metadata_path: path to metadata csv
+    :return: A DataFrame with the index column as full test name, and columns: "Short name", "LabNorm name", "Nice name", "Group", "units"
+    """
     return cached_reader(metadata_path, index_col=0)
 
 
-def get_condition_from_filename(file_name):
-    m = re.match(r"^pregnancy\.(.\w*)\.?\dw$", file_name)
+def get_condition_from_dirname(dir_name: str) -> str:
+    """
+    Try and find the condition (pathology) from the filename. Currently, supports pre-eclampsia, gdm, and postpartum hemorrhage.
+    If found the names are mapped to the short names: Pre-ecl, GDM, PPH. If not found, returns an empty string.
+    :param dir_name: The Clalit directory name.
+    :return: Condition short name if found or empty string
+    """
+    m = re.match(r"^pregnancy\.(.\w*)\.?\dw$", dir_name)
     cond_dict = {"pre-eclampsia": "Pre-ecl",
                  "gdm": "GDM",
                  "postpartum_hemorrhage": "PPH"}
@@ -29,69 +38,49 @@ def get_condition_from_filename(file_name):
 
 
 def translate_long_to_short_lab(long_names: Union[Hashable, Sequence[Hashable]]) -> pd.Series:
+    """
+    Translate long lab names to short names. All the long names MUST be in the metadata index(valid lab test names).
+    :param long_names:
+    :return:
+    """
     metadata = get_metadata()
     return metadata.loc[long_names, "Short name"]
 
 
-def translate_long_to_labnorm_name(long_names: Union[Hashable, Sequence[Hashable]]) -> pd.Series:
+def group_tests(tests: Iterable[str]) -> dict[str, list[str]]:
+    """
+    Group tests by the "Group" column in the metadata.
+    :param tests: Iterable of test names which SHOULD be in the metadata index (valid lab test names).
+    :return: Mapping from group name to valid lab test name
+    """
     metadata = get_metadata()
-    return metadata.loc[long_names, "LabNorm name"]
-
-
-def translate_long_to_nice_name(long_names: Union[Hashable, Sequence[Hashable]]) -> pd.Series:
-    metadata = get_metadata()
-    return metadata.loc[long_names, "Nice name"]
-
-
-def group_tests(tests: list[str] = None):
-    metadata = get_metadata()
-    if tests is not None:
-        metadata = metadata.loc[metadata.index.intersection(tests)]
+    metadata = metadata.loc[metadata.index.intersection(tests)]
     return metadata.groupby("Group").groups
 
 
-def get_clalit_test_names():
-    return list(map(lambda x: os.path.splitext(os.path.basename(x))[0], os.listdir(_CLALIT_PATH)))
-
-
-def get_clalit_data(test_name, clalit_path=_CLALIT_PATH):
-    df = cached_reader(os.path.join(clalit_path, test_name + ".csv")).copy()
-    df["week"] = df["week"].apply(parse_week_from_str)
-    return df.set_index("week")
-
-
 def parse_week_from_str(week_str: str) -> float:
+    """
+    Parse the week string to a float. The week string is in the format: "[start, end)".
+    :param week_str: The week string.
+    :return: The midpoint of the range.
+    :raises: ValueError if the week string is of wrong format.
+    """
     match = _RANGE_RE.match(week_str)
     if match is None:
         raise ValueError(f"Invalid week string: {week_str}")
     return (int(match.group(1)) + int(match.group(2))) / 2
 
 
-def get_clalit_age_data(test_name):
-    df = cached_reader(os.path.join(_CLALIT_BY_AGE_PATH, test_name + ".csv")).copy().iloc[:, :30]
+def get_clalit_data(test_name: str, clalit_path: str = _CLALIT_PATH) -> pd.DataFrame:
+    """
+    Get the Clalit data for a specific test. The data is indexed by the week of pregnancy (midpoint of the range).
+    :param test_name: Valid test name.
+    :param clalit_path: Path to the Clalit data directory.
+    :return: A DataFrame with the index as the week of pregnancy and columns, important among which are: "val_(q)mean", "val_(q)sd", "val_n", "val_min", "(q)val_(5,10,25,50,75,90,95)"
+    """
+    df = cached_reader(os.path.join(clalit_path, test_name + ".csv")).copy()
     df["week"] = df["week"].apply(parse_week_from_str)
-    df["age_group"] = df["age_group"].apply(parse_week_from_str)
-    return df.set_index(["week", "age_group"])
-
-
-def filter_clalit_data_by_weeks(df: pd.DataFrame, min_week: int = None, max_week: int = None):
-    return df.loc[min_week:max_week]
-
-
-def mean_by_col(df, int_column_for_mean: str = "val_n"):
-    mean_col = df[int_column_for_mean]
-    df_no_mean_col = df.drop(columns=[int_column_for_mean])
-    weighted_df = (df_no_mean_col.mul(mean_col, axis=0).sum() / mean_col.sum())
-    weighted_df[int_column_for_mean] = int(mean_col.sum())
-    return weighted_df.to_frame().T
-
-
-def get_mean_age_pre_conception(test_name, min_week=-60, max_week=-40):
-    df = get_clalit_age_data(test_name)
-    df = filter_clalit_data_by_weeks(df, min_week, max_week)
-    grouped = df.groupby(level="age_group")
-    return grouped.apply(mean_by_col).droplevel(None)
-
+    return df.set_index("week")
 
 def get_data_by_tests_and_field(tests: Sequence[str], field: str):
     sers = []
@@ -102,13 +91,13 @@ def get_data_by_tests_and_field(tests: Sequence[str], field: str):
     return pd.concat(sers, axis=1)
 
 
-def join_weekly_bins(test_name, num_bins_to_join=2):
-    df = get_clalit_age_data(test_name)
-    if num_bins_to_join == 1:
-        return df
-
-
-def get_quantiles_from_column_names(column_names):
+def get_quantiles_from_column_names(column_names: Iterable[str]) -> (list[float], list[str]):
+    """
+    Get the percentiles and convert to quantiles from the column names of each Clalit lab test CSV.
+    :param column_names: The column names to parse.
+    :return: The quantiles in the given order.
+    :raises ValueError: If the column names are not in the expected format.
+    """
     quantiles = []
     columns = []
     for column_name in column_names:

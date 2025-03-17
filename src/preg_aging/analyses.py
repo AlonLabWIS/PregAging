@@ -7,7 +7,7 @@ from scipy.stats import norm, false_discovery_control
 import statsmodels.api as sm
 import statsmodels.regression.linear_model as lm
 
-from .clalit_parser import get_clalit_data, get_mean_age_pre_conception, get_quantiles_from_column_names
+from .clalit_parser import get_clalit_data, get_quantiles_from_column_names
 from .labnorm_utils import find_median_for_lab, interp_per_age
 
 
@@ -63,12 +63,13 @@ def predict_age_in_pregnancy(model: lm.RegressionResults, clalit_path: Union[Non
     return unagg_pred
 
 
-def find_pregnancy_amplitude(test_name, test_period, sample_size=100, clalit_path=None):
-    simulated_series = simulate_pregnancy_quantile_data(test_name, test_period, sample_size, clalit_path)
-    mean_series = simulated_series.mean(axis=0)
+def find_pregnancy_quantile_amplitude(test_name, test_period, sample_size=100, clalit_path=None):
+    simulated_df = simulate_pregnancy_data(test_name, sample_size, clalit_path, test_period=test_period,
+                                           is_quantile=True)
+    mean_series = simulated_df.mean(axis=0)
     is_positive = np.where(
         mean_series.max() - mean_series[0] > mean_series[0] - mean_series.min(), 1, -1)
-    amps = (simulated_series.max(axis=1) - simulated_series.min(axis=1)) * is_positive
+    amps = (simulated_df.max(axis=1) - simulated_df.min(axis=1)) * is_positive
     return amps.mean(), amps.std()
 
 
@@ -85,8 +86,10 @@ def find_diff_amplitude(test_name: str, other_clalit_path: str, test_period: tup
     Resulting simulation values is subtracted from the "other" simulation values by week postpartum.
     :return: A 2-tuple with the first value the mean and the second value the standard deviation of the maximal difference.
     """
-    base_sim = simulate_pregnancy_quantile_data(test_name, test_period, sample_size, clalit_path_base)
-    new_sim = simulate_pregnancy_quantile_data(test_name, test_period, sample_size, other_clalit_path)
+    base_sim = simulate_pregnancy_data(test_name, sample_size, clalit_path_base, test_period=test_period,
+                                       is_quantile=True)
+    new_sim = simulate_pregnancy_data(test_name, sample_size, other_clalit_path, test_period=test_period,
+                                      is_quantile=True)
     path_difference = new_sim - base_sim
     path_diff_arg_max = np.abs(path_difference.mean(axis=0)).argmax()
     # For all repeats, choose the week in the period with the largest difference
@@ -94,10 +97,30 @@ def find_diff_amplitude(test_name: str, other_clalit_path: str, test_period: tup
     return path_diff_at_max.mean().item(), path_diff_at_max.std().item()
 
 
-def simulate_pregnancy_quantile_data(test_name: str, test_period: tuple[float, float], sample_size: int = 100,
-                                     clalit_path: Union[None, str] = None):
+def sample_test_mean_val(test_name, sample_size: int = 100, clalit_path=None, is_quantile=False,
+                         test_period: Union[tuple[float, float], None] = None, na_interpolate=False,
+                         fix_outliers=False) -> pd.Series:
+    """
+    Same as `simulate_pregnancy_quantile_data` only returning a Series with a multi-index with top level named "week" and second level unnamed counting from 1 up to `sample_size`.
+    """
+    if clalit_path is None:
+        test_df = get_clalit_data(test_name)
+    else:
+        test_df = get_clalit_data(test_name, clalit_path)
+    sim = _simulate_pregnancy_quantile_data(test_df, sample_size, is_quantile, na_interpolate, test_period,
+                                            fix_outliers)
+    return pd.DataFrame(sim.T, index=test_df.index).stack()
+
+
+def simulate_pregnancy_data(test_name: str, sample_size: int = 100, clalit_path: Union[None, str] = None,
+                            is_quantile=False, na_interpolate=False,
+                            test_period: Union[tuple[float, float], None] = None,
+                            fix_outliers=False) -> np.ndarray:
     """
     Create a sample from normal distribution based on the mean and standard deviation of the quantile data for a lab test per week.
+    :param is_quantile: If the data to sample is from the quantile columns (True) or the value columns (False).
+    :param na_interpolate: If some columns have NA values, interpolate them linearly. If False, the NA values are left as NA.
+    :param fix_outliers: If True, fix mean values which may be skewed due to outliers. See `linearly_fix_outliers`.
     :param test_name: Name of the lab test. Must be a valid CSV file name.
     :param test_period: The time period to consider for the simulation in units of "week postpartum". Data outside the range is not considered.
     First item is the lower bound on the gestaional week and the second is the upper bound.
@@ -106,12 +129,25 @@ def simulate_pregnancy_quantile_data(test_name: str, test_period: tuple[float, f
     :return: a float numpy array of shape (sample_size, weeks_in_range) with the simulated values.
     """
     if clalit_path is None:
-        df = get_clalit_data(test_name)
+        test_df = get_clalit_data(test_name)
     else:
-        df = get_clalit_data(test_name, clalit_path)
-    df_subset = df.loc[slice(*test_period), ["qval_mean", "qval_sd", "val_n"]]
-    return np.random.normal(df_subset["qval_mean"], df_subset["qval_sd"] / (df_subset["val_n"] ** 0.5),
-                            size=(sample_size, df_subset.shape[0]))  # shape is sample_size * weeks
+        test_df = get_clalit_data(test_name, clalit_path)
+    return _simulate_pregnancy_quantile_data(test_df, sample_size, is_quantile, na_interpolate, test_period,
+                                             fix_outliers)
+
+
+def remove_linear_trend_labnorm(test_name, reference_age, neighborhood: Union[int, tuple[int, int]] = 5):
+    labnorm_ref = find_median_for_lab(test_name)
+    if isinstance(neighborhood, int):
+        age_range = np.arange(reference_age - neighborhood, reference_age + neighborhood)
+    else:
+        age_range = np.arange(*neighborhood)
+    labnorm_ref_age = labnorm_ref[age_range]
+    ols_model = sm.OLS(labnorm_ref_age, sm.add_constant(labnorm_ref_age.index)).fit()
+    if ols_model.pvalues.iloc[1] > 0.05:
+        return labnorm_ref_age
+    return ols_model.resid + labnorm_ref[
+        reference_age].item()  # Really? rationale: Noise plus interecept, neutralize change in age
 
 
 def find_labnorm_amplitude(labnorm_age_ref: tuple[float, float], test_name: str, old_neighborhood: int = 5) -> tuple[
@@ -131,45 +167,12 @@ def find_labnorm_amplitude(labnorm_age_ref: tuple[float, float], test_name: str,
     return diff_labnrom.item(), labnorm_ref_quant_old_at_young.std().item()
 
 
-def remove_linear_trend_labnorm(test_name, reference_age, neighborhood: Union[int, tuple[int, int]] = 5):
-    labnorm_ref = find_median_for_lab(test_name)
-    if isinstance(neighborhood, int):
-        age_range = np.arange(reference_age - neighborhood, reference_age + neighborhood)
-    else:
-        age_range = np.arange(*neighborhood)
-    labnorm_ref_age = labnorm_ref[age_range]
-    ols_model = sm.OLS(labnorm_ref_age, sm.add_constant(labnorm_ref_age.index)).fit()
-    if ols_model.pvalues.iloc[1] > 0.05:
-        return labnorm_ref_age
-    return ols_model.resid + labnorm_ref[
-        reference_age].item()  # Really? rationale: Noise plus interecept, neutralize change in age
-
-
-def sample_test_mean_val(test_name, num_samples, clalit_path=None, is_quantile=False, na_interpolate=False,
-                         fix_outliers=False):
-    if clalit_path is None:
-        test_df = get_clalit_data(test_name)
-    else:
-        test_df = get_clalit_data(test_name, clalit_path)
-    if fix_outliers and not is_quantile:
-        fixed_df = linearly_fix_outliers(test_df)
-        test_df = fixed_df if fixed_df is not None else test_df
-    mean_col = test_df["qval_mean"] if is_quantile else test_df["val_mean"]
-    sd_col = test_df["qval_sd"] if is_quantile else test_df["val_sd"]
-    n_col = test_df["val_n"]
-    if sd_col.isna().any() and na_interpolate:  # Then all columns need interpolation
-        mean_col = mean_col.interpolate().bfill().ffill()
-        sd_col = sd_col.interpolate().bfill().ffill()
-        n_col = n_col.interpolate().bfill().ffill()
-    sim = np.random.normal(mean_col, sd_col / n_col ** 0.5, size=(num_samples, len(test_df)))
-    return pd.DataFrame(sim.T, index=test_df.index).stack()
-
-
 def sample_tests_mean_val(tests, num_samples, clalit_path=None, is_quantile=False, na_interpolate=True,
                           fix_outliers=False):
     simulation_res = None
     for test_name in tests:
-        ser = sample_test_mean_val(test_name, num_samples, clalit_path, is_quantile, na_interpolate, fix_outliers)
+        ser = sample_test_mean_val(test_name, num_samples, clalit_path, is_quantile, na_interpolate=na_interpolate,
+                                   fix_outliers=fix_outliers)
         if simulation_res is None:  # First test
             simulation_res = pd.DataFrame(ser.to_numpy(), columns=[test_name], index=ser.index)
         else:
@@ -181,7 +184,7 @@ def sample_regression_params(model_param_covar, model_param_expectation, num_sam
     return np.random.multivariate_normal(model_param_expectation, model_param_covar, num_samples)
 
 
-def z_test_spinoff_two_sided(values, compared_val=0, alternative="two-sided"):
+def z_test_no_n_div(values, compared_val=0, alternative="two-sided"):
     z_scores = (values.mean(axis=0) - compared_val) / values.std(axis=0)
     if alternative == "two-sided":
         p_values = 2 * norm.cdf(-np.abs(z_scores))  # two-sided z-test
@@ -192,18 +195,6 @@ def z_test_spinoff_two_sided(values, compared_val=0, alternative="two-sided"):
     else:
         raise ValueError(f"Alternative can be 'two-sided', 'less' or 'greater', got '{alternative}'")
     return p_values if np.isscalar(p_values) else _na_false_discovery_control(p_values)
-
-
-def count_zero_crossing_symmetric(data, alternative="two-sided"):
-    if alternative == "two-sided":
-        return (np.sign(data).diff().abs() / 2).sum(axis=0)
-        diff_pos_neg = np.sign(data).sum(axis=0).abs()
-    elif alternative == "less":
-        diff_pos_neg = (data < 0).sum(axis=0)
-    elif alternative == "greater":
-        diff_pos_neg = (data > 0).sum(axis=0)
-    p_vals = 1 - diff_pos_neg / data.shape[0]
-    return _na_false_discovery_control(np.clip(p_vals, 1 / data.shape[0], None))  # Cannot have 0 p-value
 
 
 def scr_to_egfr(scr, age):
@@ -221,9 +212,9 @@ def calculate_model_weights_ci(model: lm.RegressionResults, alpha: float = 0.05)
     Organize the regression model's weights without intercept and confidence intervals into a DataFrame.
     :param model: The regression model results
     :param alpha: The confidence level is 1-alpha bilateral.
-    :return: A dataframe with index as the feature names. "value" column is the weight, "bottom_ci" and "top_ci" are the confidence interval of 1-alpha/2 of either side.
+    :return: A dataframe with index as the feature names. "value" column is the weight, "bottom_ci" and "upper_ci" are the confidence interval of 1-alpha/2 of either side.
     """
-    names_to_weights = model.conf_int(alpha).iloc[1:].rename(columns={0: "bottom_ci", 1: "top_ci"})  # skip intercept
+    names_to_weights = model.conf_int(alpha).iloc[1:].rename(columns={0: "bottom_ci", 1: "upper_ci"})  # skip intercept
     names_to_weights["value"] = model.params.iloc[1:]  # skip intercept
     return names_to_weights
 
@@ -278,3 +269,22 @@ def _na_false_discovery_control(p_values):
     corrected[~na_inds] = false_discovery_control(p_values[~na_inds])
     corrected[na_inds] = np.nan
     return corrected
+
+
+def _simulate_pregnancy_quantile_data(test_df: pd.DataFrame, sample_size: int = 100,
+                                      is_quantile=False, na_interpolate=False,
+                                      test_period: Union[tuple[float, float], None] = None,
+                                      fix_outliers=False) -> np.ndarray:
+    if test_period is not None:
+        test_df = test_df.loc[slice(*test_period)]
+    if fix_outliers and not is_quantile:  # Using quantiles SHOULD avoid outliers problem
+        fixed_df = linearly_fix_outliers(test_df)
+        test_df = fixed_df if fixed_df is not None else test_df
+    cols = (["qval_mean", "qval_sd"] if is_quantile else ["val_mean", "val_sd"]) + [
+        "val_n"]  # Order of the columns is important
+    test_df = test_df[cols]
+    if test_df.isna().any().any() and na_interpolate:  # Then all columns need interpolation
+        test_df = test_df.interpolate(
+            "linear").bfill().ffill()  # If a column is all NA, stays NA, but this is pathological and an exception should be raised
+    test_df_np = test_df.to_numpy().T  # columns may have different names, index is always 0,1,2
+    return np.random.normal(test_df_np[0], test_df_np[1] / test_df_np[2] ** 0.5, size=(sample_size, test_df.shape[0]))

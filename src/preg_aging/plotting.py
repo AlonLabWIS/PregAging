@@ -11,9 +11,9 @@ import pandas as pd
 import numpy as np
 import statsmodels.regression.linear_model as lm
 
-from .analyses import find_pregnancy_amplitude, find_labnorm_amplitude, z_test_spinoff_two_sided, find_diff_amplitude, \
+from .analyses import find_pregnancy_quantile_amplitude, find_labnorm_amplitude, z_test_no_n_div, find_diff_amplitude, \
     calculate_model_weights_ci, predict_age_in_pregnancy
-from .clalit_parser import translate_long_to_short_lab, get_data_by_tests_and_field, get_condition_from_filename
+from .clalit_parser import translate_long_to_short_lab, get_data_by_tests_and_field, get_condition_from_dirname
 
 
 def remove_top_right_frame(axes: Iterable[Axes]):
@@ -153,7 +153,7 @@ def plot_quantile_diffs_histogram(test_names: Sequence[str], test_period: tuple[
     for test_name in test_names:
         diff_labnrom, _ = find_labnorm_amplitude(labnorm_age_ref, test_name)
         labnorm_diffs.append(diff_labnrom)
-        pregnancy_diff_mean, _ = find_pregnancy_amplitude(test_name, test_period)
+        pregnancy_diff_mean, _ = find_pregnancy_quantile_amplitude(test_name, test_period)
         preg_diffs.append(pregnancy_diff_mean)
 
     ax.hist([preg_diffs, labnorm_diffs], bins=bins, label=['Gestation', "Aging"], color=['k', 'grey'])
@@ -181,8 +181,8 @@ def plot_quantile_diffs_pregnancy_ref(ax: Axes, test_names: Sequence[str],
     """
     for test_name in test_names:
         diff_labnorm, diff_labnorm_sd = find_labnorm_amplitude(labnorm_age_ref, test_name)
-        pregnancy_diff_mean, pregnancy_diff_sd = find_pregnancy_amplitude(test_name, test_period,
-                                                                          clalit_path=clalit_path)
+        pregnancy_diff_mean, pregnancy_diff_sd = find_pregnancy_quantile_amplitude(test_name, test_period,
+                                                                                   clalit_path=clalit_path)
         ax.errorbar(diff_labnorm, pregnancy_diff_mean, xerr=2 * diff_labnorm_sd, yerr=2 * pregnancy_diff_sd, c="k",
                     marker="o", markersize=5, capsize=2)
         ax.annotate(translate_long_to_short_lab([test_name]).item(), (diff_labnorm, pregnancy_diff_mean),
@@ -232,9 +232,9 @@ def plot_quantile_diff_pregnancy_model_weights(ax: Axes, test_names: Sequence[st
     for test_name in test_names:
         weight = model_weights.loc[test_name, "value"]
         bottom_ci = weight - model_weights.loc[test_name, "bottom_ci"]  # error bar values are positive
-        top_ci = model_weights.loc[test_name, "top_ci"] - weight
-        pregnancy_diff, pregnancy_sd = find_pregnancy_amplitude(test_name, test_period)
-        ax.errorbar(weight, pregnancy_diff, xerr=np.array((bottom_ci, top_ci)).reshape(-1, 1), yerr=2 * pregnancy_sd,
+        upper_ci = model_weights.loc[test_name, "upper_ci"] - weight
+        pregnancy_diff, pregnancy_sd = find_pregnancy_quantile_amplitude(test_name, test_period)
+        ax.errorbar(weight, pregnancy_diff, xerr=np.array((bottom_ci, upper_ci)).reshape(-1, 1), yerr=2 * pregnancy_sd,
                     c="k", markersize=5, fmt="o", capsize=3)
         ax.annotate(translate_long_to_short_lab([test_name]).item(), (weight, pregnancy_diff), fontsize=13,
                     textcoords="offset points", xytext=(5, 5), ha='center')
@@ -342,7 +342,6 @@ def plot_groups_linear_prediction(test_groups: dict[str, Sequence[str]], model_p
         ax.plot(prediction.index, prediction.values, color='k', lw=1,
                 label="Group contribution" if i == 0 else None)
         finalize_weeks_postpartum_plots(ax)
-    fig.legend(loc="lower right", fontsize=12)
     return fig
 
 
@@ -367,8 +366,8 @@ def plot_age_acceleration_by_lin_reg(model: lm.RegressionResults, compared_paths
     :param y_limit: Limit for all y-axes.
     :param y_ticks: y-ticks for all y-axes.
     :param fix_outliers: Fix outliers in the Clalit data. An outlier weekly bin has a difference between the 95,5 percentiles much smaller than the standard deviation.
-    :param fig_width: In inches
-    :param subplot_height: In inches
+    :param fig_width: Width in inches
+    :param subplot_height: Height in inches
     :return: the matplotlib figure
     """
     if compared_color_map is not None and len(compared_color_map) != len(compared_paths):
@@ -380,7 +379,7 @@ def plot_age_acceleration_by_lin_reg(model: lm.RegressionResults, compared_paths
         unagg_pred = predict_age_in_pregnancy(model, healthy_path, sample_size, exclude_points, fix_outliers,
                                               compared_path)
         if conditions[i] is None:
-            conditions[i] = get_condition_from_filename(compared_path)
+            conditions[i] = get_condition_from_dirname(compared_path)
         condition = conditions[i]
         unagg_preds[condition] = unagg_pred
     unagg_preds = pd.concat(unagg_preds, names=['condition'])
@@ -419,14 +418,14 @@ def plot_age_acceleration_by_lin_reg(model: lm.RegressionResults, compared_paths
                 # Data points are not necessarily aligned with the bin limits, pick the next index
                 first_measurement_in_bin = week_level_indices[
                     week_level_indices > bin_vals.index.get_level_values("week").max()].min()
-                p_vals.append(z_test_spinoff_two_sided(bin_vals.values, alternative="greater"))
+                p_vals.append(z_test_no_n_div(bin_vals.values, alternative="greater"))
                 x_locs.append((p_val_bins[j] + right) / 2)  # Mid-bin
                 if j != 0:  # don't add vertical line for the xmin value
                     # Separate the bins visually
                     ax.axvline(x=p_val_bins[j], color="gray", linestyle="--", lw=2, alpha=0.3)
             p_vals = false_discovery_control(p_vals)  # FDR between the bins
         else:  # Do not bin, use all points
-            p_vals = z_test_spinoff_two_sided(unagg_cond.unstack().values.T, alternative="greater")
+            p_vals = z_test_no_n_div(unagg_cond.unstack().values.T, alternative="greater")
             x_locs = unagg_preds.get_level_values("week").unqiue()
         for j, p_val in enumerate(p_vals):
             if p_val is None or np.isnan(p_val):
@@ -489,8 +488,9 @@ def plot_model_weights(test_groups: dict[str, Sequence[str]], model: lm.Regressi
         display_name_tests = translate_long_to_short_lab(test_order)
         arbitrary_x_vals = range(len(tests))  # Location on the x-axis, values don't matter because it's a bar plot.
         ax.bar(arbitrary_x_vals, model.params.loc[test_order], color=color_mapping.get(group, "gray"))
-        whiskers = model_conf_int.loc[test_order, ["bottom_ci", "upper_ci"]] - model.params.loc[test_order, "value"]
-        ax.errorbar(arbitrary_x_vals, model_conf_int.loc[test_order, "value"], yerr=whiskers.T, ls="", c="k", capsize=4)
+        whiskers = model_conf_int.loc[test_order, ["bottom_ci", "upper_ci"]].T - model.params[test_order]
+        whiskers.loc["bottom_ci"] *= -1  # Bottom ci is negative, and matplotlib expects positive values (taking the error bar down by the same amount)
+        ax.errorbar(arbitrary_x_vals, model_conf_int.loc[test_order, "value"], yerr=whiskers, ls="", c="k", capsize=4)
         ax.set_xticks(arbitrary_x_vals)
         ax.set_xticklabels(display_name_tests, rotation=90, fontsize=14)
         ax.set_title(group, fontsize=15)
@@ -498,6 +498,7 @@ def plot_model_weights(test_groups: dict[str, Sequence[str]], model: lm.Regressi
         ax.grid(False)
         if y_limit is not None:
             ax.set_ylim(*y_limit)
+        ax.set_yticks(ax.get_yticks())  # Supress warning about setting yticklabels w/o setting yticks
         ax.set_yticklabels(ax.get_yticklabels(), fontsize=12)  # Yes, weird but necessary for fontsize
         ax.set_ylabel(ax.get_ylabel(), fontsize=14)
     return fig
