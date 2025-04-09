@@ -11,11 +11,23 @@ from .clalit_parser import get_clalit_data, get_quantiles_from_column_names
 from .labnorm_utils import find_median_for_lab, interp_per_age
 
 
-def identify_outliers(test_df, v95_v5_to_sd_ratio=10):
+def identify_outliers(test_df: pd.DataFrame, v95_v5_to_sd_ratio: int = 10) -> pd.Series:
+    """
+    Identify outliers in a Clalit dataframe by the following logic: If the difference between the 95th and 5th percentiles is much smaller than the standard deviation, the value is an outlier (has an unreasonably long tail).
+    :param test_df: A clalit dataframe with columns "val_95", "val_5" and "val_sd".
+    :param v95_v5_to_sd_ratio: The ratio between the difference of the 95th and 5th percentiles to the standard deviation. If the ratio is smaller, the value is an outlier.
+    :return: Boolean series with True for outliers, same index as `test_df`.
+    """
     return ((test_df["val_95"] - test_df["val_5"]) * v95_v5_to_sd_ratio) < test_df["val_sd"]
 
 
-def linearly_fix_outliers(test_df, v95_v5_to_sd_ratio=10):
+def linearly_fix_outliers(test_df: pd.DataFrame, v95_v5_to_sd_ratio=10) -> Union[pd.DataFrame, None]:
+    """
+    Identify outliers in a Clalit data frame and recalculate the mean and the standard deviation using a linear approximation of the CDF.
+    :param test_df: Clalit dataframe with dense quantiles. MUST haave columns "val_mean", "val_sd", "val_95", "val_5".
+    :param v95_v5_to_sd_ratio: Ratio between the difference of the 95th and 5th percentiles to the standard deviation. If the ratio is smaller, the value is an outlier.
+    :return: Corrected Clalit dataframe with the same columns as the input. If no outliers are found, returns None value.
+    """
     outliers_indices = identify_outliers(test_df, v95_v5_to_sd_ratio)
     if not outliers_indices.any():
         return None
@@ -63,7 +75,19 @@ def predict_age_in_pregnancy(model: lm.RegressionResults, clalit_path: Union[Non
     return unagg_pred
 
 
-def find_pregnancy_quantile_amplitude(test_name, test_period, sample_size=100, clalit_path=None):
+def find_pregnancy_quantile_amplitude(test_name: str, test_period: tuple[float, float], sample_size: int = 100,
+                                      clalit_path: Union[str, None] = None):
+    """
+    Calculate the mean and standard deviation of the amplitude of quantile value change in pregnancy.
+    The amplitude is defined by the maximum value minus the minimum value during pregnancy.
+    Positive value indicates the value peaks in pregnancy, negative value indicates it reaches a low.
+    :param test_name: Name of the lab test.
+    :param test_period: Period of pregnancy in "weeks postpartum" unit. Suggested period is [-38.0, 0.0].
+    :param sample_size: Number of samples to draw for mean and standard deviation estimation.
+    :param clalit_path: Optional. If given, points to a Clalit pregnancy directory. Otherwise, uses default.
+    :return: The mean (first return value) and standard deviation (second return value) of the max quantile change in pregnancy.
+    The sign of the mean indicates increase(+) or decrease(-) during pregnancy
+    """
     simulated_df = simulate_pregnancy_data(test_name, sample_size, clalit_path, test_period=test_period,
                                            is_quantile=True)
     mean_series = simulated_df.mean(axis=0)
@@ -113,9 +137,9 @@ def sample_test_mean_val(test_name, sample_size: int = 100, clalit_path=None, is
 
 
 def simulate_pregnancy_data(test_name: str, sample_size: int = 100, clalit_path: Union[None, str] = None,
-                            is_quantile=False, na_interpolate=False,
+                            is_quantile: bool = False, na_interpolate: bool = False,
                             test_period: Union[tuple[float, float], None] = None,
-                            fix_outliers=False) -> np.ndarray:
+                            fix_outliers: bool = False) -> np.ndarray:
     """
     Create a sample from normal distribution based on the mean and standard deviation of the quantile data for a lab test per week.
     :param is_quantile: If the data to sample is from the quantile columns (True) or the value columns (False).
@@ -137,6 +161,13 @@ def simulate_pregnancy_data(test_name: str, sample_size: int = 100, clalit_path:
 
 
 def remove_linear_trend_labnorm(test_name, reference_age, neighborhood: Union[int, tuple[int, int]] = 5):
+    """
+    
+    :param test_name:
+    :param reference_age:
+    :param neighborhood:
+    :return:
+    """
     labnorm_ref = find_median_for_lab(test_name)
     if isinstance(neighborhood, int):
         age_range = np.arange(reference_age - neighborhood, reference_age + neighborhood)
@@ -167,8 +198,12 @@ def find_labnorm_amplitude(labnorm_age_ref: tuple[float, float], test_name: str,
     return diff_labnrom.item(), labnorm_ref_quant_old_at_young.std().item()
 
 
-def sample_tests_mean_val(tests, num_samples, clalit_path=None, is_quantile=False, na_interpolate=True,
-                          fix_outliers=False):
+def sample_tests_mean_val(tests: Iterable[str], num_samples: int, clalit_path: Union[str, None] = None,
+                          is_quantile: bool = False, na_interpolate: bool = True,
+                          fix_outliers: bool = False) -> pd.DataFrame:
+    """
+    Similar to `sample_test_mean_val` but for multiple tests, returning a DataFrame with index as in `sample_test_mean_val` and colum names by the tests.
+    """
     simulation_res = None
     for test_name in tests:
         ser = sample_test_mean_val(test_name, num_samples, clalit_path, is_quantile, na_interpolate=na_interpolate,
@@ -184,7 +219,14 @@ def sample_regression_params(model_param_covar, model_param_expectation, num_sam
     return np.random.multivariate_normal(model_param_expectation, model_param_covar, num_samples)
 
 
-def z_test_no_n_div(values, compared_val=0, alternative="two-sided"):
+def z_test_no_n_div(values: np.array, compared_val: int=0, alternative: str="two-sided") -> Union[np.float, np.array]:
+    """
+    A z-test for the distribution and not the mean of the distribution. Identical to z-test without the division by sqrt(n).
+    :param values: A 1D or 2D array of values. If 2D, the z-test is on the rows followed FDR by Benjamini-Hochberg.
+    :param compared_val: The mean of the distribution for the z-test.
+    :param alternative: Either "two-sided", "less" or "greater". If "two-sided", the p-value is two-tailed.
+    :return:
+    """
     z_scores = (values.mean(axis=0) - compared_val) / values.std(axis=0)
     if alternative == "two-sided":
         p_values = 2 * norm.cdf(-np.abs(z_scores))  # two-sided z-test
@@ -219,7 +261,7 @@ def calculate_model_weights_ci(model: lm.RegressionResults, alpha: float = 0.05)
     return names_to_weights
 
 
-def recalculate_mean_sd_lin_approx(quantiles, values):
+def recalculate_mean_sd_lin_approx(quantiles: np.array, values: np.array) -> tuple[float, float]:
     """
     Piecewise linear approximation to mean and standard deviation.
     :param quantiles: Length n >1
