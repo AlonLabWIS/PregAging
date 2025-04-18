@@ -219,7 +219,7 @@ def sample_regression_params(model_param_covar, model_param_expectation, num_sam
     return np.random.multivariate_normal(model_param_expectation, model_param_covar, num_samples)
 
 
-def z_test_no_n_div(values: np.array, compared_val: int=0, alternative: str="two-sided") -> Union[np.float, np.array]:
+def z_test_no_n_div(values: np.array, compared_val: int=0, alternative: str="two-sided") -> Union[np.float64, np.array]:
     """
     A z-test for the distribution and not the mean of the distribution. Identical to z-test without the division by sqrt(n).
     :param values: A 1D or 2D array of values. If 2D, the z-test is on the rows followed FDR by Benjamini-Hochberg.
