@@ -10,10 +10,8 @@ For information about the data, please refer to [this page on Dryad 🔗](https:
 Jupyter notebook was used to run the analyses and to create the graphs. To re-run, [install anaconda or miniconda](https://docs.conda.io/projects/conda/en/latest/user-guide/install/index.html) and download the repository.
 Open the command prompt/terminal in the root directory of the repository and install the environment:
 ```
-conda env create -f environment.yml #windows only
+conda env create -f environment.yml
 ```
-Note: use environment_ubuntu.yml for non-windows operating systems (only tested on Ubuntu, but should work in general.)
-
 Start the conda environment and the jupyter server:
 ```
 conda activate pregnancy
