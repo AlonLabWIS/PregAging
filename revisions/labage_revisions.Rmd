@@ -1,0 +1,361 @@
+---
+title: "LabAge revisions"
+output: html_notebook
+---
+Glen Oct 2025
+
+```{r}
+library(ggplot2)
+library(gridExtra)
+pregAgingDir = "/home/glen/PregAging-master" #enter your PregAging-master directory location here
+outputDir = sprintf("%s/revisions",pregAgingDir)
+```
+
+```{r}
+data = read.csv(sprintf("%s/csvs/Lab distribution by age.csv",pregAgingDir))
+```
+
+```{r}
+ronData = read.csv(sprintf("%s/sampled_data_allvars.csv",pregAgingDir),row.names=1) #random sample from healthy clalit
+#ronData = read.csv(sprintf("%s/sampled_data.csv",pregAgingDir),row.names=1) #random sample from healthy clalit #after feature selection
+ronVars = sort(setdiff(colnames(ronData),"age"))
+
+codex = read.csv(sprintf("%s/csvs/Metadata.csv",pregAgingDir))
+codex=codex[!duplicated(codex[,"Test"]),]
+rownames(codex)=codex[,"Test"]
+
+codex[codex[,"units"]=="","units"] = "unknown"
+
+exVars = c("PH_u","SPECIFIC_GRAVITY","BASO_perc",
+	          "EOS_perc","HYPERperc","HYPO_perc",
+	          "LUCperc","LYMperc","MACROperc",
+	          "MICROperc_HYPOperc","MICR_perc",
+	          "MONperc","NEUTperc","PCT"
+           ) #excludes in original paper (only immune % are excluded in revised)
+allVars= unique(c(ronVars,exVars))
+```
+
+# population stats
+```{r}
+print("age stats:")
+quantile(ronData[,"age"])
+mean(ronData[,"age"])
+
+print("bmi stats:")
+quantile(ronData[,"BMI"])
+mean(ronData[,"BMI"])
+```
+
+# age dependencies
+```{r}
+g = list()
+temp=ronData
+for (j in 1:length(allVars))
+{
+  temp[,"y"] = ronData[,allVars[j]]
+  g[[j]] = ggplot(temp,aes(x=age,y=y))+
+    geom_point(size=.1)+
+    geom_smooth()+
+    labs(x="Age",y=sprintf("%s (%s)",codex[allVars[j],"Short.name"],codex[allVars[j],"units"]),title=codex[allVars[j],"Short.name"])+
+    #scale_y_log10()+annotation_logticks(sides="l")+
+    theme_minimal(base_size=12)#+
+    #theme(title = element_text(size=5))
+}
+
+g[[1]]
+#marrangeGrob(g,nrow=8,ncol=8,top=NULL)
+
+save=T
+if(save)
+{
+  layout=matrix(c(1:length(g),rep(NA,10^2-length(g))),nrow=10,ncol=10,byrow = T)
+  ggsave(sprintf("%s/data_by_decade_allvars.png",outputDir),marrangeGrob(g,nrow=10,ncol=10,top=NULL,layout_matrix = layout),width=16,height=16)
+}
+```
+
+#variable (feature) selection
+-data from NHANES, ~1300 pregnancies plus age-matched controls using matchit package
+  -https://wwwn.cdc.gov/nchs/nhanes/
+-note: p values are just z-test of delta/deltase
+```{r}
+#library(scico) #nice colour palette
+colors = c("1"="#7E1700", "2"="#C0E9C2", "3"= "#023198") #from scico roma palette
+
+agg=read.csv(sprintf("%s/nhanes_labage_delta_preg_vs_control.csv",outputDir))
+aggt=read.csv(sprintf("%s/nhanes_labage_delta_preg_vs_control_by_trimester.csv",outputDir))
+aggt[,"trimester"] = ordered(aggt[,"trimester"])
+#by system
+agg[,"shortName"] = factor(agg[,"shortName"],unique(aggt[sort.list(-abs(aggt[,"delta"])),"shortName"]))
+aggt[,"shortName"] = factor(aggt[,"shortName"],unique(aggt[sort.list(-abs(aggt[,"delta"])),"shortName"]))
+g = list()
+unsystems = unique(agg[,"system"])
+ylim = range(c(abs(aggt[,"delta"])-aggt[,"deltase"],abs(aggt[,"delta"])+aggt[,"deltase"]),na.rm=T)
+agg[,"p"] = 2*(1-pnorm((abs(agg[,"delta"]))/agg[,"deltase"]))
+aggt[,"p"] = 2*(1-pnorm((abs(aggt[,"delta"]))/aggt[,"deltase"]))
+for (i in 1:length(unsystems))
+{
+  g[[i]] = ggplot(subset(aggt,system==unsystems[i]),aes(x=shortName,y=abs(delta),ymin=abs(delta)-deltase,ymax=abs(delta)+deltase,shape=cut(p,c(-Inf,0.05,Inf),c("p < .05","NS"))))+
+  geom_hline(yintercept=0,colour="grey",size=3)+
+  geom_pointrange(data=subset(agg,system==unsystems[i]),colour="black")+ #overall
+  geom_pointrange(aes(colour=trimester),position=position_dodge(.1))+ #by trimester
+  scale_colour_manual(values=colors)+
+  scale_y_continuous(limits=ylim)+
+  labs(x="",y=bquote("|"*Delta*" | (years/sd)"),title=unsystems[i],shape="",colour="trimester")+
+  #coord_flip()+
+  theme_minimal(base_size=16)+
+    theme(legend.position=c(.8,.7))
+}
+for (i in 2:length(g)) g[[i]] = g[[i]]+theme(legend.position = "none")
+g[[1]]
+
+save=T
+if(save)
+{
+  ggsave(sprintf("%s/nhanes_variable_selection.png",outputDir),marrangeGrob(g,nrow=3,ncol=3,top=NULL),width=16,height=14)
+}
+```
+
+#Least squares estimates
+```{r}
+#functions that will import and use donor correlations
+LMFromCorEasy = function(C, #centered correlation matrix including x and y (not intercept)
+                     N, #number of data points
+                     mu, #mean of each variable (x and y) #NAMED
+                     std, #standard deviation of each variable (x and y) #NAMED
+                     ycol="y",
+                     xcol=setdiff(colnames(C),ycol),
+                     ridgePenalty=0,
+                     ret="default"
+                     )
+{
+  #basic easy version
+  
+  #warning("something is wrong here, Cv is too big")
+
+  Cv = matrix(NA,nrow=nrow(C)+1,ncol=ncol(C)+1)
+  Cv[1,1] = N/(N-1)
+  Cv[1,-1] = mu
+  Cv[-1,1] = mu
+  Cv[1:nrow(C)+1,1:ncol(C)+1] = (C*outer(std,std)*(N-1)+N*outer(mu,mu))/(N-1)
+  rownames(Cv) = c("(Intercept)",names(mu))
+  colnames(Cv) = rownames(Cv)
+  
+  #print(range(Cv))
+  #print(N)
+  
+  if(ret=="cov" | ret=="Cv") return(Cv)
+
+  return(LMFromCov2(C=Cv,N=N,ycol=ycol,xcol=c("(Intercept)",xcol),unbiased=TRUE,ridgePenalty=ridgePenalty))
+}
+
+LMFromCov2 = function(C, #UNCENTERED covariance matrix #(unbiased estimator, so 1/(N-1) term)
+                     N, #number of data points
+                     ycol="y",
+                     xcol=setdiff(colnames(C),ycol),
+                     unbiased=TRUE, #did you use unbiased estimator for C?
+                     ridgePenalty=0
+                     )
+{
+  p = length(xcol)
+  if(unbiased) C = C*(N-1)/N #de-unbias
+  
+
+  invCx = solve(C[xcol,xcol]+diag(ridgePenalty,length(xcol)))
+  beta = invCx%*%C[xcol,ycol] #1/N*N cancel #this is right
+  names(beta)=xcol
+  
+  #residual variance #don't really need N here but more accurate if we have
+  s2 = N/(N-p)*(C[ycol,ycol]-c(C[ycol,xcol]%*%beta))
+  
+  #need N here
+  beta_cov = s2*invCx/(N) #this is right
+  dimnames(beta_cov)=list(xcol,xcol)
+  
+  return(list(beta=beta,se=sqrt(diag(beta_cov)),beta_cov=beta_cov,s=sqrt(s2),s2=s2))
+}
+
+SampleCor = function(vars,
+                     systems,
+                     rhoWithinSystemsDonors,
+                     rhoBetweenSystemsDonors)
+{
+  #generate random covariance matrix based on within vs between system correlation structure
+  C = matrix(NA,nrow=length(vars),ncol=length(vars))
+  dimnames(C)=list(vars,vars)
+  diag(C)=1
+  unsystems=unique(systems)
+  ind = 1
+  for (j in 1:length(unsystems))
+  {
+    v = regVars[systems==unsystems[j]]
+    v = intersect(v,colnames(C))
+    notv = setdiff(colnames(C),v)
+    if(length(v) < 1) next
+    C[v,v]    = sample(rhoWithinSystemsDonors,size=length(v)^2,replace=T)
+    C[v,notv] = sample(rhoBetweenSystemsDonors,size=length(v)*length(notv),replace=T)
+    #C[notv,v] = C[v,notv]   #enforce symmetry #insufficient
+  }
+  #strict symmetry
+  for (i in 1:length(vars))
+  {
+    for (j in i:length(vars))
+    {
+      C[j,i] = C[i,j]
+    }
+  }
+  diag(C)=1
+return(C)
+}
+```
+
+
+```{r}
+regData = read.csv(sprintf("%s/processed_data/regression_data.csv",pregAgingDir),row.names=1) #looks same as ronData but whatever
+
+regVars = ronVars
+
+#nhanes feature selection:
+regVars = c("PROTEIN_TOTAL_BLOOD", "CHOLESTEROL", "HEMOGLOBIN_A1C_CALCULATED","FIBRINOGEN",
+         "PHOSPHATASE_ALKALINE", "UREA_BLOOD", "BPs","T3_FREE", "NEUT","TRANSFERRIN","RBC") #FERRITIN
+
+
+regData = regData[,c("age",regVars)]
+```
+
+borrow NHANES correlation matrix
+```{r}
+Cref = read.csv(sprintf("%s/nhanes_female_covariance_reference_with_age_renamed2.csv",outputDir),row.names=1)
+colnames(Cref)=rownames(Cref)
+Cref= as.matrix(Cref)
+Cref = cov2cor(Cref)
+Nmat = read.csv(sprintf("%s/nhanes_female_covariance_reference_with_age_renamed2_N.csv",outputDir),row.names=1)
+```
+
+we will approximate missing correlation coefficients using within or between system mean (some things were never measured together e.g. T3_FREE and fibrinogen)
+-this block is to get donors
+```{r}
+systems = codex[regVars,"Group"]
+withinSystemDF = list()
+betweenSystemDF =list()
+unsystems=unique(systems)
+ind = 1
+for (j in 1:length(unsystems))
+{
+  v = regVars[systems==unsystems[j]]
+  v = intersect(v,colnames(Cref))
+  notv = setdiff(colnames(Cref),v)
+  if(length(v) < 1) next
+  Ctemp = Cref #correlation matrix
+  Ctemp[lower.tri(Ctemp,diag=T)]= NA #remove redundant values
+  withinSystemDF[[ind]] = data.frame(rho=c(Ctemp[v,v]),system=unsystems[j])
+  betweenSystemDF[[ind]] = data.frame(rho=c(Ctemp[v,notv]),system=unsystems[j])
+  ind = ind+1
+}
+withinSystemDF = do.call(rbind,withinSystemDF)
+betweenSystemDF = do.call(rbind,betweenSystemDF)
+withinSystemDF[,"type"]="within systems"
+betweenSystemDF[,"type"]="between systems"
+withinSystemDF = rbind(withinSystemDF,withinSystemDF)
+
+rhoWithinDonors  = withinSystemDF[!is.na(withinSystemDF[,"rho"]),"rho"]
+rhoBetweenDonors = betweenSystemDF[!is.na(betweenSystemDF[,"rho"]),"rho"] #very similar but no outliers
+```
+
+
+```{r}
+v = c("age",regVars)
+C0 = matrix(NA,nrow=length(v),ncol=length(v))
+diag(C0)=1
+colnames(C0)=v
+rownames(C0)=v
+v = intersect(rownames(Cref),rownames(C0))
+C0[v,v] = Cref[v,v]
+rhoDonors = Cref[v,v][upper.tri(Cref[v,v],diag=F)]
+#rhoAgeDonors = Cageref[,1]
+rhoAgeDonors=NA
+C0["age",colnames(C0)] = cor(regData[,"age"],regData[,colnames(C0)],use='pairwise.complete')[1,]
+C0[,"age"] = C0["age",]
+
+if(any(is.na(C0[,"age"])) | any(is.na(C0["age",]))) stop("NAs in age dependence")
+```
+
+least-squares estimators
+-goal is to see if base estimates are biased due to missing correlation structure (we sample from marginal distributions, thus ignoring correlations)
+-we use donor correlation matrix from NHANES to approximate missing correlation structure and see how much it affects predictions (not much)
+```{r}
+#set.seed(1234)
+mu = apply(regData,2,mean,na.rm=T)
+names(mu)=colnames(regData)
+std = apply(regData,2,sd,na.rm=T)
+names(std)=colnames(regData)
+
+#baseline estimate using least-squares
+  #regData ignores correlations
+m0 = lm(age~.,regData[,c("age",regVars)])
+se = NA*coef(m0)
+names(se)=names(coef(m0))
+se[rownames(summary(m0)$coefficients)] = summary(m0)$coefficients[,"Std. Error"]
+df0 = data.frame(var=names(coef(m0)),beta=coef(m0),se=se)[-1,]
+rownames(df0)=df0[,"var"]
+pr0 = predict(m0,regData,se.fit=TRUE)
+pr020 = list()
+pr020[[1]] = mean(pr0[[1]][regData[,"age"]==20],na.rm=T)
+pr020[[2]] = SEM(pr0[[1]][regData[,"age"]==20],na.rm=T)
+
+
+#estimate when correlation matrix is known
+C = C0
+Csample = SampleCor(vars=regVars,systems=codex[regVars,"Group"],rhoWithinSystemsDonors = mean(abs(rhoWithinDonors)), rhoBetweenSystemsDonors=mean(abs(rhoBetweenDonors)))
+Csample[regVars,regVars] = Csample[regVars,regVars]*outer(sign(C0["age",regVars]),sign(C0["age",regVars])) #align sign to aging
+C[regVars,regVars][is.na(C[regVars,regVars])] = Csample[regVars,regVars][is.na(C[regVars,regVars])]
+N = mean(Nmat[regVars,regVars][upper.tri(Nmat[regVars,regVars])]) #rough estimate
+m = LMFromCorEasy(C,mu=mu,std=std,N = N,ycol="age")
+mcomb = m
+Ccomb=C
+Cvcomb = LMFromCorEasy(C,mu=mu,std=std,N = N,ycol="age",ret="cov")
+Cvcomb = cbind(Cvcomb,N=NA)
+df = data.frame(var=rownames(m$beta),beta=m$beta[,1],se=m$se)[-1,]
+pr = as.matrix(regData[,regVars])%*%m$beta[regVars]+m$beta["(Intercept)"]
+pr20 = mean(pr[regData[,"age"]==20],na.rm=T)
+
+
+plotdf = rbind(data.frame(age=regData[,"age"],pr=pr,pr20=pr20,se=NA,model="cor"),
+               data.frame(age=regData[,"age"],pr=pr0[[1]],pr20=pr020[[1]],se=pr0[[2]],model="no cor")
+               )
+g =ggplot(plotdf,aes(x=round(age),y=pr,colour=model))+
+  #geom_abline(slope=1,intercept=0,colour="grey")+
+  stat_summary(position = position_dodge(.1))+
+  #labs(x="Age - 20",y=bquote(Delta~"= LabAge(age) - LabAge(20)"),colour="")+
+  labs(x="Age ",y="LabAge",colour="")+
+  theme_minimal(base_size=24)+
+  theme(legend.position=c(.2,.8)
+        #legend.background = element_rect(fill="white",colour=NA)
+        )
+g
+
+print("RMSE:")
+print(sqrt(mean((regData[,"age"]-pr)^2,na.rm=T)))
+print(sqrt(mean((regData[,"age"]-pr0[[1]])^2,na.rm=T)))
+print("R2:")
+print(R2(regData[,"age"],pr,na.rm=T))
+print(R2(regData[,"age"],pr0[[1]],na.rm=T))
+
+save=T
+if(save)
+{
+  #fit data
+  lmdf = df[,"var",drop=F]
+  lmdf[rownames(df0),"beta_nocor"] = df0[,"beta"]
+  lmdf[rownames(df0),"beta_se_nocor"] = df0[,"se"]
+  lmdf[rownames(df),"beta_cor"] = df[,"beta"]
+  lmdf[rownames(df),"beta_se_cor"] = df[,"se"]
+  
+  write.csv(lmdf,sprintf("%s/nhanes_labage_fit.csv",outputDir),row.names=T)
+  write.csv(mcomb$beta_cov,sprintf("%s/nhanes_labage_coefficient_variance.csv",outputDir),row.names=T)
+  write.csv(Ccomb,sprintf("%s/nhanes_combined_correlations.csv",outputDir),row.names=T)
+  write.csv(Cvcomb,sprintf("%s/nhanes_labage_sufficient_statistics.csv",outputDir),row.names=T)
+  write.csv(Nmat[regVars,regVars],sprintf("%s/nhanes_labage_N.csv",outputDir),row.names=T)
+  
+  ggsave(sprintf("%s/labage_prediction_with_and_without_cor.png",outputDir),g,width=12,height=7,dpi=300)
+}
+```
