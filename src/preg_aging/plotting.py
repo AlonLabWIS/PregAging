@@ -127,7 +127,7 @@ def finalize_weeks_postpartum_plots(ax: Axes, span_label: str = "Pregnancy"):
     remove_top_right_frame([ax])
 
 
-def plot_colored_series(ax: Axes, df: pd.DataFrame, color_map: Union[str, Colormap], ylabel: Union[str, None] = None, includeLabels: bool = True):
+def plot_colored_series(ax: Axes, df: pd.DataFrame, color_map: Union[str, Colormap], ylabel: Union[str, None] = None, includeLabels: bool = True, alpha: float = .5,lwd: float=1):
     """
 
     :param ax: Axes to plot on
@@ -146,7 +146,7 @@ def plot_colored_series(ax: Axes, df: pd.DataFrame, color_map: Union[str, Colorm
         c = color_mapper.to_rgba(np.array(i))
         if includeLabels:
             ax.text(ser.index[coord], ser.values[coord], test_names_annotate[i], ha='center', fontsize=12, color=c)
-        ax.plot(df.index, ser, c=c, lw=1, alpha=0.5)
+        ax.plot(df.index, ser, c=c, lw=lwd, alpha=alpha)
         if ylabel is not None:
             ax.set_ylabel(ylabel)
 
@@ -364,6 +364,8 @@ def plot_groups_linear_prediction(test_groups: dict[str, Sequence[str]], model_p
                                   colormap: Union[str, Colormap] = "turbo",
                                   includeOverall: bool = True,
                                   includeLabels: bool = True,
+                                  alpha: float=1, #transparency of lab tests
+                                  lwd: float=1, #linewidth of lab tests
                                   statToUse: str="val_mean", #"val_mean" for mean or "val_50" for median
                                   ylabel: str = "Effective age difference (year)") -> plt.Figure:
     """
@@ -393,9 +395,9 @@ def plot_groups_linear_prediction(test_groups: dict[str, Sequence[str]], model_p
             prediction = prediction.loc[~prediction.index.isin(prediction.loc[slice(*skip_range)].index)]
             individual_predictions = individual_predictions.loc[
                 ~individual_predictions.index.isin(individual_predictions.loc[slice(*skip_range)].index)]
-        plot_colored_series(ax, individual_predictions, colormap, ylabel,includeLabels=includeLabels)
+        plot_colored_series(ax, individual_predictions, colormap, ylabel,includeLabels=includeLabels,alpha=alpha,lwd=lwd)
         if(includeOverall):
-            ax.plot(prediction.index, prediction.values, color='k', lw=1,
+            ax.plot(prediction.index, prediction.values, color='k', lw=lwd,
                 label="Group contribution" if i == 0 else None)
         finalize_weeks_postpartum_plots(ax)
     return fig
