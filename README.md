@@ -27,6 +27,6 @@ jupyter notebook
 ```
 
 
-# Additional information
+# Revisions
 
 The revisions folder contains data and an R script for computing some of the supplemental results, including variable selection using NHANES.
