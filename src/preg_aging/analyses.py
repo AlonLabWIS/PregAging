@@ -92,7 +92,7 @@ def find_pregnancy_quantile_amplitude(test_name: str, test_period: tuple[float, 
                                            is_quantile=True)
     mean_series = simulated_df.mean(axis=0)
     is_positive = np.where(
-        mean_series.max() - mean_series[0] > mean_series[0] - mean_series.min(), 1, -1)
+        mean_series.max() - mean_series[0] > mean_series[0] - mean_series.min(), 1, -1) #+1 if average goes up, -1 if average goes down
     amps = (simulated_df.max(axis=1) - simulated_df.min(axis=1)) * is_positive
     return amps.mean(), amps.std()
 
