@@ -7,7 +7,7 @@ Glen Oct 2025
 ```{r}
 library(ggplot2)
 library(gridExtra)
-pregAgingDir = "/home/glen/PregAging-master" #enter your PregAging-master directory location here
+pregAgingDir = "C:/PregAging-master" #enter your PregAging-master directory location here
 outputDir = sprintf("%s/revisions",pregAgingDir)
 ```
 
@@ -15,63 +15,7 @@ outputDir = sprintf("%s/revisions",pregAgingDir)
 data = read.csv(sprintf("%s/csvs/Lab distribution by age.csv",pregAgingDir))
 ```
 
-```{r}
-ronData = read.csv(sprintf("%s/sampled_data_allvars.csv",pregAgingDir),row.names=1) #random sample from healthy clalit
-#ronData = read.csv(sprintf("%s/sampled_data.csv",pregAgingDir),row.names=1) #random sample from healthy clalit #after feature selection
-ronVars = sort(setdiff(colnames(ronData),"age"))
 
-codex = read.csv(sprintf("%s/csvs/Metadata.csv",pregAgingDir))
-codex=codex[!duplicated(codex[,"Test"]),]
-rownames(codex)=codex[,"Test"]
-
-codex[codex[,"units"]=="","units"] = "unknown"
-
-exVars = c("PH_u","SPECIFIC_GRAVITY","BASO_perc",
-	          "EOS_perc","HYPERperc","HYPO_perc",
-	          "LUCperc","LYMperc","MACROperc",
-	          "MICROperc_HYPOperc","MICR_perc",
-	          "MONperc","NEUTperc","PCT"
-           ) #excludes in original paper (only immune % are excluded in revised)
-allVars= unique(c(ronVars,exVars))
-```
-
-# population stats
-```{r}
-print("age stats:")
-quantile(ronData[,"age"])
-mean(ronData[,"age"])
-
-print("bmi stats:")
-quantile(ronData[,"BMI"])
-mean(ronData[,"BMI"])
-```
-
-# age dependencies
-```{r}
-g = list()
-temp=ronData
-for (j in 1:length(allVars))
-{
-  temp[,"y"] = ronData[,allVars[j]]
-  g[[j]] = ggplot(temp,aes(x=age,y=y))+
-    geom_point(size=.1)+
-    geom_smooth()+
-    labs(x="Age",y=sprintf("%s (%s)",codex[allVars[j],"Short.name"],codex[allVars[j],"units"]),title=codex[allVars[j],"Short.name"])+
-    #scale_y_log10()+annotation_logticks(sides="l")+
-    theme_minimal(base_size=12)#+
-    #theme(title = element_text(size=5))
-}
-
-g[[1]]
-#marrangeGrob(g,nrow=8,ncol=8,top=NULL)
-
-save=T
-if(save)
-{
-  layout=matrix(c(1:length(g),rep(NA,10^2-length(g))),nrow=10,ncol=10,byrow = T)
-  ggsave(sprintf("%s/data_by_decade_allvars.png",outputDir),marrangeGrob(g,nrow=10,ncol=10,top=NULL,layout_matrix = layout),width=16,height=16)
-}
-```
 
 #variable (feature) selection
 -data from NHANES, ~1300 pregnancies plus age-matched controls using matchit package
@@ -208,7 +152,7 @@ return(C)
 }
 ```
 
-
+you must run the jupyter notebook to save regression_data.csv
 ```{r}
 regData = read.csv(sprintf("%s/processed_data/regression_data.csv",pregAgingDir),row.names=1) #looks same as ronData but whatever
 
@@ -357,5 +301,65 @@ if(save)
   write.csv(Nmat[regVars,regVars],sprintf("%s/nhanes_labage_N.csv",outputDir),row.names=T)
   
   ggsave(sprintf("%s/labage_prediction_with_and_without_cor.png",outputDir),g,width=12,height=7,dpi=300)
+}
+```
+
+#variable trajectories and population stats
+you must run the jupyter notebook to produce sampled_data_allvars.csv
+```{r}
+ronData = read.csv(sprintf("%s/processed_data/sampled_data_allvars.csv",pregAgingDir),row.names=1) #random sample from healthy clalit
+#ronData = read.csv(sprintf("%s/processed_data/sampled_data.csv",pregAgingDir),row.names=1) #random sample from healthy clalit #after feature selection
+ronVars = sort(setdiff(colnames(ronData),"age"))
+
+codex = read.csv(sprintf("%s/csvs/Metadata.csv",pregAgingDir))
+codex=codex[!duplicated(codex[,"Test"]),]
+rownames(codex)=codex[,"Test"]
+
+codex[codex[,"units"]=="","units"] = "unknown"
+
+exVars = c("PH_u","SPECIFIC_GRAVITY","BASO_perc",
+	          "EOS_perc","HYPERperc","HYPO_perc",
+	          "LUCperc","LYMperc","MACROperc",
+	          "MICROperc_HYPOperc","MICR_perc",
+	          "MONperc","NEUTperc","PCT"
+           ) #excludes in original paper (only immune % are excluded in revised)
+allVars= unique(c(ronVars,exVars))
+```
+
+# population stats
+```{r}
+print("age stats:")
+quantile(ronData[,"age"])
+mean(ronData[,"age"])
+
+print("bmi stats:")
+quantile(ronData[,"BMI"])
+mean(ronData[,"BMI"])
+```
+
+# age dependencies
+```{r}
+g = list()
+temp=ronData
+for (j in 1:length(allVars))
+{
+  temp[,"y"] = ronData[,allVars[j]]
+  g[[j]] = ggplot(temp,aes(x=age,y=y))+
+    geom_point(size=.1)+
+    geom_smooth()+
+    labs(x="Age",y=sprintf("%s (%s)",codex[allVars[j],"Short.name"],codex[allVars[j],"units"]),title=codex[allVars[j],"Short.name"])+
+    #scale_y_log10()+annotation_logticks(sides="l")+
+    theme_minimal(base_size=12)#+
+    #theme(title = element_text(size=5))
+}
+
+g[[1]]
+#marrangeGrob(g,nrow=8,ncol=8,top=NULL)
+
+save=T
+if(save)
+{
+  layout=matrix(c(1:length(g),rep(NA,10^2-length(g))),nrow=10,ncol=10,byrow = T)
+  ggsave(sprintf("%s/data_by_decade_allvars.png",outputDir),marrangeGrob(g,nrow=10,ncol=10,top=NULL,layout_matrix = layout),width=16,height=16)
 }
 ```
