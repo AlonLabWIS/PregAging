@@ -7,7 +7,7 @@ Glen Oct 2025
 ```{r}
 library(ggplot2)
 library(gridExtra)
-pregAgingDir = "C:/PregAging-master" #enter your PregAging-master directory location here
+pregAgingDir = "/home/glen/PregAging-master" #enter your PregAging-master directory location here
 outputDir = sprintf("%s/revisions",pregAgingDir)
 ```
 
@@ -15,9 +15,6 @@ outputDir = sprintf("%s/revisions",pregAgingDir)
 data = read.csv(sprintf("%s/csvs/Lab distribution by age.csv",pregAgingDir))
 ```
 
-
-#variable trajectories and population stats
-you must run the jupyter notebook to produce sampled_data_allvars.csv
 ```{r}
 ronData = read.csv(sprintf("%s/processed_data/sampled_data_allvars.csv",pregAgingDir),row.names=1) #random sample from healthy clalit
 #ronData = read.csv(sprintf("%s/processed_data/sampled_data.csv",pregAgingDir),row.names=1) #random sample from healthy clalit #after feature selection
@@ -30,6 +27,7 @@ rownames(codex)=codex[,"Test"]
 codex[codex[,"units"]=="","units"] = "unknown"
 
 exVars = c("PH_u","SPECIFIC_GRAVITY",
+            #"BASO_perc","EOS_perc","LUCperc","LYMperc","MONperc","NEUTperc", #we use counts instead
 	          "HYPERperc","HYPO_perc",
 	          "MACROperc",
 	          "MICROperc_HYPOperc","MICR_perc",
@@ -86,6 +84,9 @@ colors = c("1"="#7E1700", "2"="#C0E9C2", "3"= "#023198") #from scico roma palett
 
 agg=read.csv(sprintf("%s/nhanes_labage_delta_preg_vs_control.csv",outputDir))
 aggt=read.csv(sprintf("%s/nhanes_labage_delta_preg_vs_control_by_trimester.csv",outputDir))
+#specific substitituion:
+agg[,"shortName"] = gsub("Uric acid","Uric\nacid",agg[,"shortName"])
+aggt[,"shortName"] = gsub("Uric acid","Uric\nacid",aggt[,"shortName"])
 aggt[,"trimester"] = ordered(aggt[,"trimester"])
 #by system
 agg[,"shortName"] = factor(agg[,"shortName"],unique(aggt[sort.list(-abs(aggt[,"delta"])),"shortName"]))
@@ -99,8 +100,8 @@ for (i in 1:length(unsystems))
 {
   g[[i]] = ggplot(subset(aggt,system==unsystems[i]),aes(x=shortName,y=abs(delta),ymin=abs(delta)-deltase,ymax=abs(delta)+deltase,shape=cut(p,c(-Inf,0.05,Inf),c("p < .05","NS"))))+
   geom_hline(yintercept=0,colour="grey",size=3)+
-  geom_pointrange(data=subset(agg,system==unsystems[i]),colour="black")+ #overall
-  geom_pointrange(aes(colour=trimester),position=position_dodge(.1))+ #by trimester
+  geom_pointrange(data=subset(agg,system==unsystems[i]),colour="black",position= position_nudge(x = 0.25))+ #overall
+  geom_pointrange(aes(colour=trimester),position=position_dodge(.5))+ #by trimester
   scale_colour_manual(values=colors)+
   scale_y_continuous(limits=ylim)+
   labs(x="",y=bquote("|"*Delta*" | (years/sd)"),title=unsystems[i],shape="",colour="trimester")+
@@ -120,6 +121,30 @@ if(save)
 
 #Least squares estimates
 ```{r}
+R2 = function(obs,est,na.rm=F,multi=!is.null(dim(obs)))
+{
+  #est: estimated y
+  #obs: observed y
+  if(!multi)
+  {
+    #r2 =  1 - sum((obs-est)^2,na.rm=na.rm)/sum((obs-mean(obs,na.rm=na.rm))^2,na.rm=na.rm)
+    r2 =  1 - mean((obs-est)^2,na.rm=na.rm)/mean((obs-mean(obs,na.rm=na.rm))^2,na.rm=na.rm) #not sure which to use... this makes sense to me when lots of data are missing in est (MCAR)
+    #if data are MAR should I only compare mean of obs for which est is non na?
+  }
+  else
+  {
+    r2 = numeric(ncol(est))
+    for (i in 1:ncol(est)) r2[i] = R2(obs[,i],est[,i],na.rm=na.rm,multi=F)
+  }
+  return(r2)
+}
+
+SEM = function(x,na.rm=F)
+{
+  if(na.rm) x = x[!is.na(x)]
+  return(sd(x)/sqrt(length(x)))
+}
+
 #functions that will import and use donor correlations
 LMFromCorEasy = function(C, #centered correlation matrix including x and y (not intercept)
                      N, #number of data points
@@ -209,18 +234,11 @@ SampleCor = function(vars,
   diag(C)=1
 return(C)
 }
-
-SEM = function(x,na.rm=T)
-{
-  return(sd(x,na.rm=na.rm)/sqrt(sum(!is.na(x))))
-}
-
-
 ```
 
-you must run the jupyter notebook to save regression_data.csv
+
 ```{r}
-regData = read.csv(sprintf("%s/processed_data/sampled_data_allvars.csv",pregAgingDir),row.names=1) 
+regData = read.csv(sprintf("%s/processed_data/regression_data.csv",pregAgingDir),row.names=1) #looks same as ronData but whatever
 
 regVars = ronVars
 
@@ -342,6 +360,13 @@ g =ggplot(plotdf,aes(x=round(age),y=pr,colour=model))+
         #legend.background = element_rect(fill="white",colour=NA)
         )
 g
+
+print("RMSE:")
+print(sqrt(mean((regData[,"age"]-pr)^2,na.rm=T)))
+print(sqrt(mean((regData[,"age"]-pr0[[1]])^2,na.rm=T)))
+print("R2:")
+print(R2(regData[,"age"],pr,na.rm=T))
+print(R2(regData[,"age"],pr0[[1]],na.rm=T))
 
 save=T
 if(save)
